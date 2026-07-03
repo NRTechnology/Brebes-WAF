@@ -8,4 +8,14 @@
      libmodsecurity3 \
      libnginx-mod-http-modsecurity \
      modsecurity-crs
-4. 
+4. change directory to /opt
+   - cd /opt
+5. git clone main branch
+   - git clone  https://github.com/NRTechnology/Brebes-WAF.git
+6. change directory to /opt/Brebes-WAF
+   - cd /opt/Brebes-WAF
+7. add executable permition to /opt/Brebes-WAF/script/deploy.sh
+   - chmod +x /opt/Brebes-WAF/script/deploy.sh
+8. execute deploy.sh
+   - /opt/Brebes-WAF/script/deploy.sh
+9.  
