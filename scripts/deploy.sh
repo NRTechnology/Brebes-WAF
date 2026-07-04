@@ -66,7 +66,7 @@ include modsecurity.conf
 #
 # OWASP CRS
 #
-#include /etc/nginx/modsecurity/crs-load.conf
+include /etc/nginx/modsecurity/crs-load.conf
 
 #
 # BREBES-WAF Rules
