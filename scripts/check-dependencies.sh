@@ -706,6 +706,148 @@ else
 fi
 
 # =============================================================================
+# Nginx Global ModSecurity & Reverser Log Configuration
+# =============================================================================
+
+log_section "Nginx Global Security Configuration"
+
+NGINX_MAIN_CONF="/etc/nginx/nginx.conf"
+
+if [[ ! -f "${NGINX_MAIN_CONF}" ]]; then
+    log_error "Nginx main configuration tidak ditemukan:"
+    echo "    ${NGINX_MAIN_CONF}"
+    exit 1
+fi
+
+# -------------------------------------------------------------------------
+# Backup nginx.conf before modification
+# -------------------------------------------------------------------------
+
+NGINX_BACKUP_DIR="${APT_BACKUP_DIR}/${BACKUP_TIMESTAMP}"
+
+mkdir -p "${NGINX_BACKUP_DIR}"
+
+cp -a \
+    "${NGINX_MAIN_CONF}" \
+    "${NGINX_BACKUP_DIR}/nginx.conf"
+
+log_ok "Backup nginx.conf dibuat:"
+echo "    ${NGINX_BACKUP_DIR}/nginx.conf"
+
+# -------------------------------------------------------------------------
+# Check / Enable ModSecurity
+# -------------------------------------------------------------------------
+
+if grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;' \
+    "${NGINX_MAIN_CONF}"; then
+
+    log_ok "Global ModSecurity sudah aktif."
+
+else
+
+    log_warn "Global ModSecurity belum aktif."
+    log_info "Mengaktifkan ModSecurity pada http {}..."
+
+    sed -i '/^[[:space:]]*http[[:space:]]*{/a\
+\
+        ##\
+        # BREBES-WAF / ModSecurity\
+        ##\
+        modsecurity on;\
+        modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;\
+' "${NGINX_MAIN_CONF}"
+
+    log_ok "Global ModSecurity berhasil diaktifkan."
+
+fi
+
+# -------------------------------------------------------------------------
+# Check ModSecurity Rules File
+# -------------------------------------------------------------------------
+
+if grep -Eq \
+    '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;' \
+    "${NGINX_MAIN_CONF}"; then
+
+    log_ok "ModSecurity rules file sudah dikonfigurasi."
+
+else
+
+    log_warn "ModSecurity rules file belum dikonfigurasi."
+
+    if grep -Eq \
+        '^[[:space:]]*modsecurity[[:space:]]+on;' \
+        "${NGINX_MAIN_CONF}"; then
+
+        sed -i '/^[[:space:]]*modsecurity[[:space:]]\+on;/a\
+        modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;' \
+            "${NGINX_MAIN_CONF}"
+
+        log_ok "ModSecurity rules file berhasil dikonfigurasi."
+
+    fi
+
+fi
+
+# -------------------------------------------------------------------------
+# Check reverser log_format
+# -------------------------------------------------------------------------
+
+if grep -Eq \
+    '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' \
+    "${NGINX_MAIN_CONF}"; then
+
+    log_ok "log_format reverser sudah tersedia."
+
+else
+
+    log_warn "log_format reverser belum tersedia."
+    log_info "Menambahkan log_format reverser ke http {}..."
+
+    sed -i '/^[[:space:]]*http[[:space:]]*{/a\
+\
+        ##\
+        # BREBES Reverse Proxy Log Format\
+        ##\
+        log_format reverser\
+          '\''$remote_addr '\''\
+          '\''[$time_local] '\''\
+          '\''"$request" '\''\
+          '\''$status '\''\
+          '\''$body_bytes_sent '\''\
+          '\''"$http_referer" '\''\
+          '\''"$http_user_agent" '\''\
+          '\''host="$host" '\''\
+          '\''xff="$http_x_forwarded_for" '\''\
+          '\''rt=$request_time '\''\
+          '\''urt=$upstream_response_time '\''\
+          '\''upstream="$upstream_addr"'\'';\
+' "${NGINX_MAIN_CONF}"
+
+    log_ok "log_format reverser berhasil ditambahkan."
+
+fi
+
+# -------------------------------------------------------------------------
+# Display Global Security Configuration
+# -------------------------------------------------------------------------
+
+echo
+echo "Global ModSecurity configuration:"
+grep -E \
+    '^[[:space:]]*(modsecurity|modsecurity_rules_file)[[:space:]]+' \
+    "${NGINX_MAIN_CONF}" \
+    || true
+
+echo
+echo "reverser log format:"
+grep -A 12 \
+    -E '^[[:space:]]*log_format[[:space:]]+reverser' \
+    "${NGINX_MAIN_CONF}" \
+    || true
+
+
+# =============================================================================
 # ModSecurity Configuration
 # =============================================================================
 
@@ -864,6 +1006,53 @@ else
 
     log_warn "BREBES-WAF directory belum tersedia:"
     echo "    ${BREBES_WAF_HOME}"
+
+fi
+
+# =============================================================================
+# Verify Effective Nginx Configuration
+# =============================================================================
+
+log_section "Effective Nginx Configuration Check"
+
+if ! NGINX_DUMP="$(nginx -T 2>&1)"; then
+    log_error "Gagal membaca effective Nginx configuration."
+    echo
+    echo "${NGINX_DUMP}"
+    exit 1
+fi
+
+if echo "${NGINX_DUMP}" | grep -Eq \
+    '^[[:space:]]*modsecurity[[:space:]]+on;'; then
+
+    log_ok "ModSecurity aktif pada effective Nginx configuration."
+
+else
+
+    log_error "ModSecurity tidak aktif pada effective Nginx configuration."
+    exit 1
+
+fi
+
+if echo "${NGINX_DUMP}" | grep -Eq \
+    '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
+
+    log_ok "BREBES-WAF ModSecurity include aktif."
+
+else
+
+    log_warn "BREBES-WAF ModSecurity include belum terdeteksi."
+
+fi
+
+if echo "${NGINX_DUMP}" | grep -Eq \
+    '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)'; then
+
+    log_ok "log_format reverser aktif."
+
+else
+
+    log_warn "log_format reverser belum terdeteksi."
 
 fi
 
