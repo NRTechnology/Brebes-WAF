@@ -18,6 +18,14 @@ Belum ada.
 
 Belum ada.
 
+### Deprecated
+
+Belum ada.
+
+### Removed
+
+Belum ada.
+
 ### Fixed
 
 Belum ada.
@@ -32,90 +40,146 @@ Belum ada.
 
 ---
 
-## [1.0.0] - 2026-09-10
+## [1.1.0] - 2026-09-11
 
-Release stabil pertama BREBES-WAF.
+Release kedua BREBES-WAF.
 
-Release ini mencakup struktur dasar project, integrasi OWASP CRS, deployment automation, upload protection, Git repository protection, security testing, detection log analysis, serta mekanisme backup dan rollback.
+Release ini menambahkan automation untuk pemeriksaan dan instalasi dependency, standardisasi repository Ubuntu, deteksi package ModSecurity, dukungan Ubuntu Deb822 repository, serta peningkatan persiapan environment sebelum deployment BREBES-WAF.
+
+Release **1.1.0 telah melalui pengujian dan validasi sebelum digunakan**.
 
 ### Added
 
-#### 1. BREBES-WAF Rule Structure
+#### 1. BREBES-WAF Dependency Check & Installation
 
-Menambahkan struktur kategori rule BREBES-WAF:
+Menambahkan script:
 
-    rules/
-    ├── 00-core/
-    ├── 10-upload/
-    ├── 20-webshell/
-    ├── 30-wordpress/
-    ├── 40-malware/
-    ├── 50-generic/
-    ├── 60-git/
-    └── 90-local/
+    scripts/check-dependencies.sh
 
-Struktur ini digunakan untuk memisahkan rule berdasarkan fungsi dan kategori keamanan.
+Script digunakan untuk melakukan pemeriksaan dan persiapan dependency yang diperlukan oleh BREBES-WAF sebelum proses deployment.
 
-Tujuan:
+Fungsi utama:
 
-- Mempermudah maintenance.
-- Mempermudah audit rule.
-- Mempermudah troubleshooting.
-- Mempermudah pengembangan rule baru.
-- Memisahkan rule berdasarkan kategori serangan.
-
----
-
-#### 2. Upload Protection
-
-Menambahkan perlindungan terhadap file upload melalui kategori:
-
-    rules/10-upload/
-
-Perlindungan mencakup pemeriksaan extension file yang diizinkan dan penolakan terhadap extension yang tidak diperbolehkan.
-
-Extension yang diizinkan:
-
-    .png
-    .jpg
-    .jpeg
-    .webp
-    .pdf
-    .txt
-    .rtf
-    .doc
-    .docx
-    .odt
-    .xls
-    .xlsx
-    .csv
-    .ods
-    .ppt
-    .pptx
-    .odp
-
-Contoh extension yang tidak diperbolehkan:
-
-    .php
-    .php5
-    .phtml
-    .phar
-    .cgi
-    .pl
-    .py
-    .sh
-    .exe
+- Memeriksa sistem operasi Ubuntu.
+- Memeriksa versi dan codename Ubuntu.
+- Memeriksa dependency BREBES-WAF.
+- Memeriksa Nginx.
+- Memeriksa ModSecurity v3.
+- Memeriksa Nginx ModSecurity Connector.
+- Memeriksa Nginx NDK module.
+- Memeriksa OWASP Core Rule Set (CRS).
+- Memeriksa Git.
+- Memeriksa curl.
+- Memeriksa CA certificates.
+- Menginstal dependency yang belum tersedia.
+- Memastikan service Nginx tersedia dan berjalan.
+- Memastikan module ModSecurity Nginx tersedia.
+- Memastikan module NDK tersedia.
+- Memastikan konfigurasi module Nginx tersedia.
+- Memastikan konfigurasi ModSecurity tersedia.
+- Memastikan OWASP CRS tersedia.
+- Melakukan validasi konfigurasi Nginx.
+- Memastikan environment siap digunakan oleh BREBES-WAF.
 
 Tujuan:
 
-- Mengurangi risiko malicious file upload.
-- Mencegah upload file executable.
-- Mengurangi risiko webshell melalui mekanisme upload.
-- Memberikan kontrol terhadap jenis file yang dapat di-upload.
+- Mengurangi kegagalan deployment akibat dependency yang belum tersedia.
+- Menstandarkan environment BREBES-WAF.
+- Mempermudah instalasi pada server baru.
+- Mengurangi konfigurasi manual.
+- Memastikan dependency utama tersedia sebelum deployment.
 
 ---
 
-#### 3. Git Repository Protection
+#### 2. Ubuntu Official Repository Configuration
+
+Menambahkan kemampuan pada:
+
+    scripts/check-dependencies.sh
+
+untuk memastikan repository Ubuntu menggunakan repository resmi Ubuntu.
+
+Repository utama:
+
+    http://archive.ubuntu.com/ubuntu
+
+Repository security:
+
+    http://security.ubuntu.com/ubuntu
+
+Komponen repository:
+
+    main
+    restricted
+    universe
+    multiverse
+
+Script melakukan backup konfigurasi repository sebelum melakukan perubahan.
+
+Tujuan:
+
+- Mengurangi masalah dependency akibat repository mirror yang bermasalah.
+- Memastikan package BREBES-WAF tersedia dari repository Ubuntu resmi.
+- Menstandarkan sumber package pada proses deployment.
+- Memudahkan deployment pada server baru.
+
+---
+
+#### 3. APT Repository Backup
+
+Menambahkan mekanisme backup konfigurasi APT sebelum perubahan repository Ubuntu dilakukan.
+
+Backup mencakup:
+
+    /etc/apt/sources.list
+
+dan:
+
+    /etc/apt/sources.list.d/
+
+Tujuan:
+
+- Memungkinkan konfigurasi repository dikembalikan apabila terjadi masalah.
+- Mengurangi risiko perubahan repository yang tidak dapat dipulihkan.
+- Menyediakan jejak konfigurasi sebelum proses deployment.
+
+---
+
+#### 4. Ubuntu Deb822 Repository Support
+
+Menambahkan dukungan terhadap format repository Ubuntu berbasis Deb822:
+
+    /etc/apt/sources.list.d/ubuntu.sources
+
+Hal ini memungkinkan BREBES-WAF menangani sistem Ubuntu yang menggunakan format repository modern selain format:
+
+    /etc/apt/sources.list
+
+---
+
+#### 5. ModSecurity Package Detection
+
+Menambahkan pemeriksaan otomatis terhadap package ModSecurity yang tersedia pada sistem Ubuntu.
+
+Script mendeteksi library ModSecurity yang sesuai dengan sistem, termasuk:
+
+    libmodsecurity3
+
+atau:
+
+    libmodsecurity3t64
+
+Pemeriksaan dilakukan sebelum proses instalasi dependency BREBES-WAF.
+
+Tujuan:
+
+- Menyesuaikan instalasi dengan versi Ubuntu.
+- Menghindari hard-code nama package yang tidak tersedia pada versi Ubuntu tertentu.
+- Meningkatkan kompatibilitas deployment.
+
+---
+
+#### 6. Git Repository Protection
 
 Menambahkan kategori rule khusus untuk melindungi repository Git yang terekspos melalui web server.
 
@@ -151,7 +215,7 @@ Risiko yang dikurangi:
 
 ---
 
-#### 4. Git Protection Test Script
+#### 7. Git Protection Test Script
 
 Menambahkan script PowerShell untuk menguji Git Repository Protection.
 
@@ -182,7 +246,7 @@ Script digunakan sebagai bagian dari security testing BREBES-WAF.
 
 ---
 
-#### 5. Git Test Repository
+#### 8. Git Test Repository
 
 Menambahkan repository Git test yang memiliki struktur `.git` sebenarnya untuk keperluan pengujian BREBES-WAF.
 
@@ -200,13 +264,13 @@ Repository test digunakan untuk memastikan rule Git Repository Protection mampu 
 
 ---
 
-#### 6. First-Time Deployment Script
+#### 9. First-Time Deployment Script
 
 Menambahkan script deployment khusus untuk deployment pertama kali.
 
 File:
 
-    scripts/deployfirsttime.sh
+    scripts/deploy-first-time.sh
 
 Fungsi:
 
@@ -220,7 +284,7 @@ Fungsi:
 
 ---
 
-#### 7. Detection Log Analysis
+#### 10. Detection Log Analysis
 
 Menambahkan script untuk membantu analisis log deteksi BREBES-WAF dan OWASP CRS.
 
@@ -245,7 +309,7 @@ Tujuan:
 
 ---
 
-#### 8. OWASP CRS Integration
+#### 11. OWASP CRS Integration
 
 Menambahkan integrasi dengan OWASP Core Rule Set melalui:
 
@@ -288,7 +352,7 @@ File:
 
     scripts/deploy.sh
 
-Deployment script diperbarui untuk melakukan pemeriksaan terhadap:
+Deployment script melakukan pemeriksaan terhadap:
 
     /etc/nginx/modsecurity/crs-load.conf
 
@@ -321,9 +385,7 @@ File tersebut memuat:
 Contoh:
 
     include modsecurity.conf
-
     include /etc/nginx/modsecurity/crs-load.conf
-
     Include /opt/Brebes-WAF/rules/00-core/...
     Include /opt/Brebes-WAF/rules/10-upload/...
     Include /opt/Brebes-WAF/rules/20-webshell/...
@@ -394,6 +456,50 @@ Tujuan:
 
 ---
 
+#### 7. Deployment Preparation Workflow
+
+Proses deployment BREBES-WAF kini dapat diawali dengan pemeriksaan dependency secara otomatis menggunakan:
+
+    ./scripts/check-dependencies.sh
+
+Setelah dependency dinyatakan tersedia dan environment siap, proses deployment dapat dilanjutkan menggunakan:
+
+    ./scripts/deploy-first-time.sh
+
+atau:
+
+    ./scripts/deploy.sh
+
+Workflow:
+
+    Check Dependency
+          ↓
+    Prepare Environment
+          ↓
+    Deploy BREBES-WAF
+          ↓
+    Validate Nginx
+          ↓
+    Reload Nginx
+          ↓
+    Verify
+          ↓
+    BREBES-WAF Active
+
+---
+
+### Deprecated
+
+Belum ada.
+
+---
+
+### Removed
+
+Belum ada.
+
+---
+
 ### Fixed
 
 #### 1. Upload Extension False Positive
@@ -438,11 +544,33 @@ Hal ini mencegah deployment menghasilkan konfigurasi WAF tanpa custom rules BREB
 
 ---
 
+#### 3. Dependency Availability
+
+Memperbaiki proses deployment yang sebelumnya dapat dilanjutkan ketika dependency BREBES-WAF belum tersedia.
+
+Dengan dependency checker, kondisi dependency dapat diketahui terlebih dahulu sebelum deployment.
+
+---
+
+#### 4. ModSecurity Package Compatibility
+
+Memperbaiki ketergantungan terhadap nama package ModSecurity tertentu dengan melakukan deteksi package yang tersedia pada sistem Ubuntu.
+
+BREBES-WAF dapat menangani perbedaan nama package library ModSecurity, seperti:
+
+    libmodsecurity3
+
+dan:
+
+    libmodsecurity3t64
+
+---
+
 ### Security
 
 #### 1. Exposed Git Repository Protection
 
-BREBES-WAF `1.0.0` menambahkan perlindungan terhadap repository Git yang terekspos melalui web server.
+BREBES-WAF `1.1.0` mempertahankan perlindungan terhadap repository Git yang terekspos melalui web server.
 
 Akses terhadap:
 
@@ -461,17 +589,17 @@ Perlindungan mencakup:
 
 Risiko:
 
-    Source Code Disclosure
-    Credential Disclosure
-    Repository Metadata Disclosure
-    Commit History Disclosure
-    Information Disclosure
+- Source Code Disclosure.
+- Credential Disclosure.
+- Repository Metadata Disclosure.
+- Commit History Disclosure.
+- Information Disclosure.
 
 ---
 
 #### 2. Upload Security
 
-BREBES-WAF `1.0.0` mempertahankan kontrol terhadap file upload untuk mengurangi risiko:
+BREBES-WAF `1.1.0` mempertahankan kontrol terhadap file upload untuk mengurangi risiko:
 
 - Malicious file upload.
 - Executable file upload.
@@ -490,8 +618,36 @@ Deployment menggunakan:
 - Controlled reload.
 - Rollback mechanism.
 - Automatic rule discovery.
+- Dependency validation.
 
 Tujuan utama adalah mencegah perubahan konfigurasi WAF yang invalid atau tidak lengkap diterapkan ke server production.
+
+---
+
+#### 4. Dependency Validation
+
+Sebelum deployment, dependency utama BREBES-WAF diperiksa untuk memastikan environment memenuhi persyaratan yang diperlukan.
+
+Validasi mencakup:
+
+- Nginx.
+- ModSecurity v3.
+- Nginx ModSecurity Connector.
+- Nginx NDK.
+- OWASP CRS.
+- Git.
+- curl.
+- CA certificates.
+- Konfigurasi ModSecurity.
+- Konfigurasi BREBES-WAF.
+
+---
+
+#### 5. Repository Configuration Backup
+
+Konfigurasi repository Ubuntu dibackup sebelum dilakukan perubahan.
+
+Hal ini memberikan kemampuan recovery terhadap konfigurasi APT apabila terjadi masalah selama proses persiapan environment.
 
 ---
 
@@ -499,7 +655,7 @@ Tujuan utama adalah mencegah perubahan konfigurasi WAF yang invalid atau tidak l
 
 #### 1. Changelog
 
-Menambahkan dokumentasi perubahan project melalui:
+Dokumentasi perubahan project dicatat melalui:
 
     changelog/CHANGELOG.md
 
@@ -512,12 +668,31 @@ Changelog digunakan untuk mencatat:
 - False positive fix.
 - Perubahan deployment.
 - Perubahan testing.
+- Perubahan dependency.
+- Perubahan repository.
 - Perubahan dokumentasi.
 - Release version.
 
 ---
 
-#### 2. Rule ID Convention
+#### 2. Dependency Installation Documentation
+
+Menambahkan dokumentasi mengenai:
+
+- Persyaratan sistem.
+- Dependency BREBES-WAF.
+- Pemeriksaan dependency.
+- Instalasi dependency.
+- Repository Ubuntu.
+- ModSecurity v3.
+- OWASP CRS.
+- Nginx ModSecurity Connector.
+- Nginx NDK.
+- Proses first-time deployment.
+
+---
+
+#### 3. Rule ID Convention
 
 BREBES-WAF menggunakan pembagian Rule ID berdasarkan kategori.
 
@@ -534,7 +709,7 @@ BREBES-WAF menggunakan pembagian Rule ID berdasarkan kategori.
 
 ---
 
-#### 3. Rule Naming Convention
+#### 4. Rule Naming Convention
 
 Nama file rule menggunakan format:
 
@@ -546,6 +721,24 @@ Contoh:
     6001001-git-directory.conf
     6001002-git-files.conf
     6001003-git-sensitive-path.conf
+
+---
+
+#### 5. Deployment Documentation
+
+Dokumentasi deployment diperbarui untuk mencakup workflow:
+
+    check-dependencies.sh
+           ↓
+    deploy-first-time.sh
+           ↓
+    deploy.sh
+           ↓
+    nginx -t
+           ↓
+    Reload
+           ↓
+    Verify
 
 ---
 
@@ -592,6 +785,7 @@ Memastikan:
 - File `.conf` tersedia.
 - OWASP CRS tersedia.
 - `crs-load.conf` tersedia.
+- Dependency utama tersedia.
 
 ### Backup
 
@@ -845,7 +1039,7 @@ Contoh:
 
 menjadi:
 
-    ## [1.1.0] - 2026-10-01
+    ## [1.1.0] - 2026-09-11
 
 ### Release Date
 
@@ -855,7 +1049,7 @@ Tanggal release menggunakan format:
 
 Contoh:
 
-    2026-09-10
+    2026-09-11
 
 ---
 
@@ -863,13 +1057,13 @@ Contoh:
 
 Changelog menggunakan kategori:
 
-    Added
-    Changed
-    Deprecated
-    Removed
-    Fixed
-    Security
-    Documentation
+- Added
+- Changed
+- Deprecated
+- Removed
+- Fixed
+- Security
+- Documentation
 
 ### Added
 
@@ -971,13 +1165,13 @@ Alur:
        Testing
           │
           ▼
-    Code Review
+      Code Review
           │
           ▼
-    Pull Request
+     Pull Request
           │
           ▼
-         main
+        main
           │
           ▼
     Release / Production
@@ -997,6 +1191,8 @@ Perubahan yang wajib dicatat:
 - Perubahan konfigurasi ModSecurity.
 - Perubahan OWASP CRS.
 - Perubahan deployment script.
+- Perubahan dependency.
+- Perubahan repository configuration.
 - Perubahan testing script.
 - Security fix.
 - False positive fix.
@@ -1114,9 +1310,10 @@ Struktur repository BREBES-WAF:
     ├── samples/
     │
     ├── scripts/
+    │   ├── check-dependencies.sh
     │   ├── check-last-detection.sh
     │   ├── deploy.sh
-    │   ├── deployfirsttime.sh
+    │   ├── deploy-first-time.sh
     │   └── lastday-detection.sh
     │
     └── tests/
@@ -1126,7 +1323,7 @@ Struktur repository BREBES-WAF:
 
 ## Release Checklist
 
-### Version 1.0.0
+### Version 1.1.0
 
 #### Rules
 
@@ -1148,6 +1345,13 @@ Struktur repository BREBES-WAF:
 - [x] Nginx syntax validation.
 - [x] Deployment rollback.
 - [x] First-time deployment script.
+- [x] Dependency checking.
+- [x] Dependency installation.
+- [x] Ubuntu official repository configuration.
+- [x] APT repository backup.
+- [x] Ubuntu Deb822 repository support.
+- [x] ModSecurity package detection.
+- [x] Deployment preparation validation.
 
 #### Testing
 
@@ -1156,6 +1360,9 @@ Struktur repository BREBES-WAF:
 - [x] Positive testing.
 - [x] Negative testing.
 - [x] False positive analysis.
+- [x] Dependency testing.
+- [x] Deployment testing.
+- [x] Nginx configuration validation.
 
 #### Monitoring
 
@@ -1167,6 +1374,7 @@ Struktur repository BREBES-WAF:
 - [x] Changelog.
 - [x] Rule ID convention.
 - [x] Rule naming convention.
+- [x] Dependency documentation.
 - [x] Deployment principles.
 - [x] Testing principles.
 - [x] Git workflow.
@@ -1178,12 +1386,13 @@ Struktur repository BREBES-WAF:
 
 | Version | Release Date | Status | Description |
 |---|---|---|---|
+| `Unreleased` | - | Development | Perubahan yang sedang dikembangkan |
+| `1.1.0` | `2026-09-11` | **Stable** | Dependency automation, Ubuntu repository configuration, ModSecurity package detection, dan deployment preparation |
 | `1.0.0` | `2026-09-10` | Stable | Initial BREBES-WAF release |
-| `Unreleased` | - | Development | Changes after version 1.0.0 |
 
 ---
 
-## [Unreleased] Checklist
+## Unreleased Checklist
 
 ### Rules
 
@@ -1222,6 +1431,42 @@ Struktur repository BREBES-WAF:
 
 ## Release Notes
 
+### BREBES-WAF 1.1.0
+
+**Release Date:** 2026-09-11
+
+BREBES-WAF `1.1.0` merupakan release kedua yang memperluas automation dan deployment preparation dari BREBES-WAF.
+
+Release ini menambahkan:
+
+- Dependency checking.
+- Automatic dependency installation.
+- Ubuntu official repository configuration.
+- APT repository backup.
+- Ubuntu Deb822 repository support.
+- ModSecurity package detection.
+- Deployment dependency validation.
+- Improved first-time deployment preparation.
+
+Fokus release:
+
+- Dependency Automation.
+- Environment Preparation.
+- Ubuntu Repository Standardization.
+- ModSecurity Compatibility.
+- OWASP CRS Integration.
+- Secure Deployment.
+- Configuration Backup.
+- Deployment Rollback.
+- Git Repository Protection.
+- Upload Protection.
+- Detection Log Analysis.
+- Security Testing.
+
+Release `1.1.0` telah melalui pengujian dan validasi sebelum digunakan dan menjadi baseline untuk pengembangan BREBES-WAF berikutnya.
+
+---
+
 ### BREBES-WAF 1.0.0
 
 **Release Date:** 2026-09-10
@@ -1229,11 +1474,17 @@ Struktur repository BREBES-WAF:
 BREBES-WAF `1.0.0` merupakan release stabil pertama yang menyediakan fondasi Web Application Firewall berbasis:
 
     Nginx
+
     +
+
     ModSecurity v3
+
     +
+
     OWASP CRS
+
     +
+
     BREBES-WAF Rules
 
 Fokus release:
@@ -1265,9 +1516,15 @@ Informasi lisensi BREBES-WAF mengikuti ketentuan lisensi yang ditetapkan pada re
 Web Application Firewall Security Ruleset
 
     Nginx
+
     +
+
     ModSecurity v3
+
     +
+
     OWASP CRS
+
     +
+
     BREBES-WAF Rules
