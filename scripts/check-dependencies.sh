@@ -5,7 +5,7 @@
 # Dependency Check & Installation Script
 #
 # File    : scripts/check-dependencies.sh
-# Version : 1.0.0
+# Version : 1.1.0
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -13,6 +13,9 @@
 #
 # Supported:
 #   Ubuntu 22.04+
+#
+# Repository:
+#   Ubuntu Official Main Repository
 #
 # Components:
 #   - Nginx
@@ -23,6 +26,7 @@
 #   - Git
 #   - Curl
 #   - CA Certificates
+#   - Unzip
 #
 # =============================================================================
 
@@ -34,24 +38,14 @@ set -euo pipefail
 
 BREBES_WAF_HOME="/opt/Brebes-WAF"
 
+UBUNTU_MAIN_REPOSITORY="http://archive.ubuntu.com/ubuntu"
+UBUNTU_SECURITY_REPOSITORY="http://security.ubuntu.com/ubuntu"
+
+APT_BACKUP_DIR="/root/brebes-waf-apt-backup"
+
 MODSECURITY_MODULE_PACKAGE="libnginx-mod-http-modsecurity"
-MODSECURITY_LIBRARY_PACKAGE="libmodsecurity3"
-MODSECURITY_DEV_PACKAGE="libmodsecurity-dev"
 NGINX_NDK_PACKAGE="libnginx-mod-http-ndk"
 CRS_PACKAGE="modsecurity-crs"
-
-REQUIRED_PACKAGES=(
-    nginx
-    curl
-    ca-certificates
-    git
-    unzip
-    "$MODSECURITY_MODULE_PACKAGE"
-    "$MODSECURITY_LIBRARY_PACKAGE"
-    "$MODSECURITY_DEV_PACKAGE"
-    "$NGINX_NDK_PACKAGE"
-    "$CRS_PACKAGE"
-)
 
 # =============================================================================
 # Colors
@@ -112,44 +106,83 @@ package_installed()
 # =============================================================================
 
 if [[ "${EUID}" -ne 0 ]]; then
+
     log_error "Script harus dijalankan sebagai root."
+
     echo
     echo "Gunakan:"
     echo
     echo "    sudo $0"
     echo
+
     exit 1
+
 fi
 
 # =============================================================================
-# OS Check
+# Operating System Check
 # =============================================================================
 
 log_section "Operating System Check"
 
 if [[ ! -f /etc/os-release ]]; then
+
     log_error "/etc/os-release tidak ditemukan."
     exit 1
+
 fi
 
 source /etc/os-release
 
-echo "OS          : ${PRETTY_NAME:-unknown}"
-echo "ID          : ${ID:-unknown}"
-echo "Version     : ${VERSION_ID:-unknown}"
-echo "Architecture: $(dpkg --print-architecture)"
+echo "OS            : ${PRETTY_NAME:-unknown}"
+echo "ID            : ${ID:-unknown}"
+echo "Version       : ${VERSION_ID:-unknown}"
+echo "Architecture  : $(dpkg --print-architecture)"
 
-if [[ "${ID}" != "ubuntu" ]]; then
-    log_warn "Script ini dibuat khusus untuk Ubuntu."
-    log_warn "Sistem terdeteksi: ${PRETTY_NAME:-unknown}"
-    echo
-    read -r -p "Tetap lanjutkan? [y/N]: " ANSWER
+if [[ "${ID:-}" != "ubuntu" ]]; then
 
-    if [[ ! "${ANSWER}" =~ ^[Yy]$ ]]; then
-        log_info "Installation dibatalkan."
-        exit 0
-    fi
+    log_error "Operating system bukan Ubuntu."
+    log_error "BREBES-WAF dependency script ini hanya mendukung Ubuntu."
+
+    exit 1
+
 fi
+
+UBUNTU_CODENAME="${VERSION_CODENAME:-}"
+
+if [[ -z "${UBUNTU_CODENAME}" ]] && command_exists lsb_release; then
+    UBUNTU_CODENAME=$(lsb_release -sc)
+fi
+
+if [[ -z "${UBUNTU_CODENAME}" ]]; then
+
+    log_error "Ubuntu codename tidak dapat dideteksi."
+    exit 1
+
+fi
+
+echo "Codename      : ${UBUNTU_CODENAME}"
+
+# =============================================================================
+# Ubuntu Version Check
+# =============================================================================
+
+case "${UBUNTU_CODENAME}" in
+
+    jammy)
+        log_ok "Ubuntu 22.04 Jammy Jellyfish detected."
+        ;;
+
+    noble)
+        log_ok "Ubuntu 24.04 Noble Numbat detected."
+        ;;
+
+    *)
+        log_warn "Ubuntu version/codename belum diuji secara khusus:"
+        echo "    ${UBUNTU_CODENAME}"
+        ;;
+
+esac
 
 # =============================================================================
 # APT Check
@@ -158,59 +191,254 @@ fi
 log_section "APT Check"
 
 if ! command_exists apt-get; then
+
     log_error "apt-get tidak ditemukan."
-    log_error "Script ini membutuhkan sistem berbasis Debian/Ubuntu."
     exit 1
+
 fi
 
 log_ok "apt-get tersedia."
 
 # =============================================================================
-# Repository Check
+# Backup APT Repository Configuration
 # =============================================================================
 
-log_section "APT Repository"
+log_section "APT Repository Backup"
 
-log_info "Updating package index..."
+BACKUP_TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+CURRENT_BACKUP_DIR="${APT_BACKUP_DIR}/${BACKUP_TIMESTAMP}"
 
-apt-get update
+mkdir -p "${CURRENT_BACKUP_DIR}"
 
-log_ok "APT package index berhasil diperbarui."
+log_info "Backup repository configuration..."
+
+if [[ -f /etc/apt/sources.list ]]; then
+
+    cp -a \
+        /etc/apt/sources.list \
+        "${CURRENT_BACKUP_DIR}/sources.list"
+
+    log_ok "Backed up /etc/apt/sources.list"
+
+fi
+
+if [[ -d /etc/apt/sources.list.d ]]; then
+
+    cp -a \
+        /etc/apt/sources.list.d \
+        "${CURRENT_BACKUP_DIR}/sources.list.d"
+
+    log_ok "Backed up /etc/apt/sources.list.d"
+
+fi
+
+echo
+echo "APT Backup:"
+echo "    ${CURRENT_BACKUP_DIR}"
 
 # =============================================================================
-# Universe Repository
+# Detect Ubuntu Repository Configuration
 # =============================================================================
 
-log_info "Memastikan repository Universe tersedia..."
+log_section "Ubuntu Repository Configuration"
 
-if command_exists add-apt-repository; then
+UBUNTU_SOURCES_FILE="/etc/apt/sources.list.d/ubuntu.sources"
 
-    if grep -RqsE '^[[:space:]]*deb .* universe' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
-        log_ok "Repository Universe tersedia."
-    else
-        log_info "Mengaktifkan repository Universe..."
+# -------------------------------------------------------------------------
+# Ubuntu 24.04+ / Deb822 format
+# -------------------------------------------------------------------------
 
-        apt-get install -y software-properties-common
+if [[ -f "${UBUNTU_SOURCES_FILE}" ]]; then
 
-        add-apt-repository -y universe
+    log_info "Ubuntu Deb822 repository detected:"
+    echo "    ${UBUNTU_SOURCES_FILE}"
 
-        apt-get update
+    cat > "${UBUNTU_SOURCES_FILE}" <<EOF
+Types: deb
+URIs: ${UBUNTU_MAIN_REPOSITORY}
+Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
-        log_ok "Repository Universe berhasil diaktifkan."
-    fi
+Types: deb
+URIs: ${UBUNTU_SECURITY_REPOSITORY}
+Suites: ${UBUNTU_CODENAME}-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+
+    log_ok "Ubuntu repository dikonfigurasi ke official Ubuntu repository."
 
 else
 
-    log_warn "add-apt-repository belum tersedia."
-    log_info "Installing software-properties-common..."
+    # ---------------------------------------------------------------------
+    # Traditional sources.list
+    # ---------------------------------------------------------------------
 
-    apt-get install -y software-properties-common
+    log_info "Menggunakan traditional APT sources.list format."
 
-    add-apt-repository -y universe
+    cat > /etc/apt/sources.list <<EOF
+deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME} main restricted universe multiverse
+deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+deb ${UBUNTU_SECURITY_REPOSITORY} ${UBUNTU_CODENAME}-security main restricted universe multiverse
+EOF
 
-    apt-get update
+    log_ok "Ubuntu repository dikonfigurasi ke official Ubuntu repository."
 
-    log_ok "Repository Universe berhasil diaktifkan."
+fi
+
+# =============================================================================
+# Disable Existing Ubuntu Mirror Configuration
+# =============================================================================
+
+log_section "Ubuntu Mirror Check"
+
+if [[ -d /etc/apt/sources.list.d ]]; then
+
+    shopt -s nullglob
+
+    for SOURCE_FILE in /etc/apt/sources.list.d/*.list
+    do
+
+        if grep -Eqi \
+            'archive\.ubuntu\.com|[a-z0-9.-]+\.ubuntu\.com|ports\.ubuntu\.com' \
+            "${SOURCE_FILE}" 2>/dev/null; then
+
+            log_info "Ubuntu repository ditemukan di:"
+            echo "    ${SOURCE_FILE}"
+
+            # Do not modify ubuntu.sources itself.
+            if [[ "${SOURCE_FILE}" != "/etc/apt/sources.list.d/ubuntu.list" ]]; then
+
+                BACKUP_FILE="${SOURCE_FILE}.brebes-waf-backup"
+
+                cp -a "${SOURCE_FILE}" "${BACKUP_FILE}"
+
+                sed -i \
+                    -E 's/^[[:space:]]*deb[[:space:]]/# BREBES-WAF disabled: deb/' \
+                    "${SOURCE_FILE}"
+
+                log_ok "Ubuntu mirror lama dinonaktifkan:"
+                echo "    ${SOURCE_FILE}"
+
+            fi
+
+        fi
+
+    done
+
+    shopt -u nullglob
+
+fi
+
+# =============================================================================
+# Show Active Ubuntu Repository
+# =============================================================================
+
+log_section "Active Ubuntu Repository"
+
+if [[ -f /etc/apt/sources.list ]]; then
+
+    echo
+    echo "--- /etc/apt/sources.list ---"
+
+    grep -E \
+        '^[[:space:]]*deb ' \
+        /etc/apt/sources.list \
+        || true
+
+fi
+
+if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
+
+    echo
+    echo "--- /etc/apt/sources.list.d/ubuntu.sources ---"
+
+    cat /etc/apt/sources.list.d/ubuntu.sources
+
+fi
+
+# =============================================================================
+# APT Update
+# =============================================================================
+
+log_section "APT Update"
+
+log_info "Updating Ubuntu package index..."
+
+apt-get update
+
+log_ok "APT update berhasil."
+
+# =============================================================================
+# Check Required Package Availability
+# =============================================================================
+
+log_section "Package Availability Check"
+
+# -------------------------------------------------------------------------
+# Detect ModSecurity library package
+# -------------------------------------------------------------------------
+
+MODSECURITY_LIBRARY_PACKAGE=""
+
+if apt-cache show libmodsecurity3 >/dev/null 2>&1; then
+
+    MODSECURITY_LIBRARY_PACKAGE="libmodsecurity3"
+
+elif apt-cache show libmodsecurity3t64 >/dev/null 2>&1; then
+
+    MODSECURITY_LIBRARY_PACKAGE="libmodsecurity3t64"
+
+else
+
+    log_error "Package ModSecurity v3 tidak tersedia pada repository."
+    exit 1
+
+fi
+
+log_ok "ModSecurity library package:"
+echo "    ${MODSECURITY_LIBRARY_PACKAGE}"
+
+# -------------------------------------------------------------------------
+# Detect ModSecurity development package
+# -------------------------------------------------------------------------
+
+MODSECURITY_DEV_PACKAGE=""
+
+if apt-cache show libmodsecurity-dev >/dev/null 2>&1; then
+
+    MODSECURITY_DEV_PACKAGE="libmodsecurity-dev"
+
+else
+
+    log_warn "libmodsecurity-dev tidak tersedia."
+    log_warn "Development package tidak wajib untuk runtime BREBES-WAF."
+
+fi
+
+# =============================================================================
+# Required Packages
+# =============================================================================
+
+REQUIRED_PACKAGES=(
+    nginx
+    curl
+    ca-certificates
+    git
+    unzip
+    "${MODSECURITY_MODULE_PACKAGE}"
+    "${MODSECURITY_LIBRARY_PACKAGE}"
+    "${NGINX_NDK_PACKAGE}"
+    "${CRS_PACKAGE}"
+)
+
+if [[ -n "${MODSECURITY_DEV_PACKAGE}" ]]; then
+
+    REQUIRED_PACKAGES+=(
+        "${MODSECURITY_DEV_PACKAGE}"
+    )
 
 fi
 
@@ -224,14 +452,28 @@ MISSING_PACKAGES=()
 
 for PACKAGE in "${REQUIRED_PACKAGES[@]}"
 do
-    if package_installed "$PACKAGE"; then
-        VERSION=$(dpkg-query -W -f='${Version}' "$PACKAGE" 2>/dev/null || echo "unknown")
 
-        log_ok "$PACKAGE [$VERSION]"
+    if package_installed "${PACKAGE}"; then
+
+        VERSION=$(dpkg-query \
+            -W \
+            -f='${Version}' \
+            "${PACKAGE}" \
+            2>/dev/null \
+            || echo "unknown")
+
+        log_ok "${PACKAGE} [${VERSION}]"
+
     else
-        log_warn "$PACKAGE belum terinstall."
-        MISSING_PACKAGES+=("$PACKAGE")
+
+        log_warn "${PACKAGE} belum terinstall."
+
+        MISSING_PACKAGES+=(
+            "${PACKAGE}"
+        )
+
     fi
+
 done
 
 # =============================================================================
@@ -247,14 +489,17 @@ if [[ "${#MISSING_PACKAGES[@]}" -gt 0 ]]; then
 
     for PACKAGE in "${MISSING_PACKAGES[@]}"
     do
-        echo "    - $PACKAGE"
+
+        echo "    - ${PACKAGE}"
+
     done
 
     echo
 
-    apt-get install -y "${MISSING_PACKAGES[@]}"
+    apt-get install -y \
+        "${MISSING_PACKAGES[@]}"
 
-    log_ok "Semua dependency yang diperlukan berhasil diproses."
+    log_ok "Missing packages berhasil diinstall."
 
 else
 
@@ -277,29 +522,35 @@ if command_exists nginx; then
 
 else
 
-    log_error "Nginx tidak ditemukan setelah proses installation."
+    log_error "Nginx tidak ditemukan setelah installation."
     exit 1
 
 fi
 
 # =============================================================================
-# Nginx Service Check
+# Nginx Service
 # =============================================================================
 
 log_section "Nginx Service"
 
 if systemctl is-enabled nginx >/dev/null 2>&1; then
+
     log_ok "Nginx enabled."
+
 else
-    log_info "Mengaktifkan Nginx saat boot..."
+
+    log_info "Mengaktifkan Nginx..."
 
     systemctl enable nginx
 
     log_ok "Nginx enabled."
+
 fi
 
 if systemctl is-active nginx >/dev/null 2>&1; then
+
     log_ok "Nginx sedang running."
+
 else
 
     log_info "Nginx belum running."
@@ -307,30 +558,25 @@ else
     systemctl start nginx
 
     if systemctl is-active nginx >/dev/null 2>&1; then
+
         log_ok "Nginx berhasil dijalankan."
+
     else
+
         log_error "Nginx gagal dijalankan."
-        systemctl status nginx --no-pager || true
+
+        systemctl status nginx \
+            --no-pager \
+            || true
+
         exit 1
+
     fi
 
 fi
 
 # =============================================================================
-# Nginx Configuration Test
-# =============================================================================
-
-log_section "Nginx Configuration Test"
-
-if nginx -t; then
-    log_ok "Nginx configuration valid."
-else
-    log_error "Nginx configuration tidak valid."
-    exit 1
-fi
-
-# =============================================================================
-# ModSecurity Library Check
+# ModSecurity v3 Library Check
 # =============================================================================
 
 log_section "ModSecurity v3 Check"
@@ -341,7 +587,9 @@ if ldconfig -p 2>/dev/null | grep -q "libmodsecurity"; then
 
     log_ok "ModSecurity v3 library ditemukan."
 
-    ldconfig -p 2>/dev/null | grep "libmodsecurity" || true
+    ldconfig -p 2>/dev/null \
+        | grep "libmodsecurity" \
+        || true
 
     MODSECURITY_FOUND=true
 
@@ -349,7 +597,12 @@ fi
 
 if package_installed "libmodsecurity3"; then
 
-    VERSION=$(dpkg-query -W -f='${Version}' libmodsecurity3 2>/dev/null || echo "unknown")
+    VERSION=$(dpkg-query \
+        -W \
+        -f='${Version}' \
+        libmodsecurity3 \
+        2>/dev/null \
+        || echo "unknown")
 
     log_ok "libmodsecurity3 installed."
     echo "    Version: ${VERSION}"
@@ -360,7 +613,12 @@ fi
 
 if package_installed "libmodsecurity3t64"; then
 
-    VERSION=$(dpkg-query -W -f='${Version}' libmodsecurity3t64 2>/dev/null || echo "unknown")
+    VERSION=$(dpkg-query \
+        -W \
+        -f='${Version}' \
+        libmodsecurity3t64 \
+        2>/dev/null \
+        || echo "unknown")
 
     log_ok "libmodsecurity3t64 installed."
     echo "    Version: ${VERSION}"
@@ -370,12 +628,14 @@ if package_installed "libmodsecurity3t64"; then
 fi
 
 if [[ "${MODSECURITY_FOUND}" != "true" ]]; then
+
     log_error "ModSecurity v3 library tidak ditemukan."
     exit 1
+
 fi
 
 # =============================================================================
-# ModSecurity Nginx Module Check
+# ModSecurity Nginx Module
 # =============================================================================
 
 log_section "Nginx ModSecurity Module Check"
@@ -397,23 +657,39 @@ else
 fi
 
 # =============================================================================
-# Nginx Module Configuration Check
+# Nginx NDK Module
 # =============================================================================
 
-log_section "Nginx Module Configuration"
+log_section "Nginx NDK Module Check"
+
+if [[ -f /usr/lib/nginx/modules/ndk_http_module.so ]]; then
+
+    log_ok "Nginx NDK module ditemukan:"
+    echo "    /usr/lib/nginx/modules/ndk_http_module.so"
+
+else
+
+    log_warn "Nginx NDK module tidak ditemukan:"
+    echo "    /usr/lib/nginx/modules/ndk_http_module.so"
+
+fi
+
+# =============================================================================
+# ModSecurity Module Configuration
+# =============================================================================
+
+log_section "ModSecurity Module Configuration"
 
 if [[ -f /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf ]]; then
 
-    log_ok "ModSecurity Nginx module configuration tersedia:"
+    log_ok "ModSecurity module configuration tersedia:"
     echo "    /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
 
 else
 
-    log_warn "ModSecurity module configuration tidak ditemukan."
-
     if [[ -f /etc/nginx/modules-available/mod-http-modsecurity.conf ]]; then
 
-        log_info "Membuat symlink module configuration..."
+        log_info "Mengaktifkan ModSecurity Nginx module..."
 
         ln -sf \
             /etc/nginx/modules-available/mod-http-modsecurity.conf \
@@ -423,31 +699,14 @@ else
 
     else
 
-        log_error "Module configuration ModSecurity tidak ditemukan."
-        exit 1
+        log_warn "ModSecurity module configuration tidak ditemukan."
 
     fi
 
 fi
 
 # =============================================================================
-# ModSecurity Directive Check
-# =============================================================================
-
-log_section "ModSecurity Directive Check"
-
-if nginx -T 2>/dev/null | grep -q "modsecurity_module"; then
-
-    log_ok "ModSecurity module dikenali oleh Nginx."
-
-else
-
-    log_warn "ModSecurity module belum terdeteksi melalui nginx -T."
-
-fi
-
-# =============================================================================
-# ModSecurity Configuration Check
+# ModSecurity Configuration
 # =============================================================================
 
 log_section "ModSecurity Configuration"
@@ -459,24 +718,25 @@ if [[ -f /etc/nginx/modsecurity.conf ]]; then
 
 else
 
-    log_warn "ModSecurity configuration tidak ditemukan."
+    log_warn "ModSecurity configuration belum tersedia:"
+    echo "    /etc/nginx/modsecurity.conf"
+
+    log_info "File konfigurasi akan disiapkan oleh deploy-first-time.sh."
 
 fi
 
+# =============================================================================
+# BREBES-WAF Include Configuration
+# =============================================================================
+
 if [[ -f /etc/nginx/modsecurity_includes.conf ]]; then
 
-    log_ok "ModSecurity include configuration ditemukan:"
+    log_ok "BREBES-WAF ModSecurity include ditemukan:"
     echo "    /etc/nginx/modsecurity_includes.conf"
 
 else
 
-    log_info "modsecurity_includes.conf belum tersedia."
-
-    if [[ -f /usr/share/nginx/docs/modsecurity/modsecurity_includes.conf ]]; then
-
-        log_info "Template ModSecurity include tersedia dari package."
-
-    fi
+    log_info "BREBES-WAF ModSecurity include belum tersedia."
 
 fi
 
@@ -490,7 +750,12 @@ CRS_FOUND=false
 
 if package_installed "modsecurity-crs"; then
 
-    CRS_VERSION=$(dpkg-query -W -f='${Version}' modsecurity-crs 2>/dev/null || echo "unknown")
+    CRS_VERSION=$(dpkg-query \
+        -W \
+        -f='${Version}' \
+        modsecurity-crs \
+        2>/dev/null \
+        || echo "unknown")
 
     log_ok "OWASP CRS package installed."
     echo "    Version: ${CRS_VERSION}"
@@ -508,20 +773,27 @@ CRS_LOCATIONS=(
 
 for CRS_PATH in "${CRS_LOCATIONS[@]}"
 do
-    if [[ -d "$CRS_PATH" ]]; then
+
+    if [[ -d "${CRS_PATH}" ]]; then
 
         log_ok "Potential CRS directory ditemukan:"
-        echo "    $CRS_PATH"
+        echo "    ${CRS_PATH}"
 
         CRS_FOUND=true
 
     fi
+
 done
 
 if [[ "${CRS_FOUND}" != "true" ]]; then
-    log_warn "OWASP CRS tidak terdeteksi."
+
+    log_error "OWASP CRS tidak ditemukan."
+    exit 1
+
 else
+
     log_ok "OWASP CRS tersedia."
+
 fi
 
 # =============================================================================
@@ -532,9 +804,7 @@ log_section "Git Check"
 
 if command_exists git; then
 
-    GIT_VERSION=$(git --version)
-
-    log_ok "$GIT_VERSION"
+    log_ok "$(git --version)"
 
 else
 
@@ -553,7 +823,7 @@ if command_exists curl; then
 
     CURL_VERSION=$(curl --version | head -n 1)
 
-    log_ok "$CURL_VERSION"
+    log_ok "${CURL_VERSION}"
 
 else
 
@@ -585,31 +855,31 @@ fi
 
 log_section "BREBES-WAF Directory Check"
 
-if [[ -d "$BREBES_WAF_HOME" ]]; then
+if [[ -d "${BREBES_WAF_HOME}" ]]; then
 
     log_ok "BREBES-WAF directory ditemukan:"
-    echo "    $BREBES_WAF_HOME"
+    echo "    ${BREBES_WAF_HOME}"
 
 else
 
     log_warn "BREBES-WAF directory belum tersedia:"
-    echo "    $BREBES_WAF_HOME"
+    echo "    ${BREBES_WAF_HOME}"
 
 fi
 
 # =============================================================================
-# Final Nginx Test
+# Final Nginx Configuration Test
 # =============================================================================
 
-log_section "Final Nginx Test"
+log_section "Final Nginx Configuration Test"
 
 if nginx -t; then
 
-    log_ok "Final Nginx configuration test berhasil."
+    log_ok "Nginx configuration valid."
 
 else
 
-    log_error "Final Nginx configuration test gagal."
+    log_error "Nginx configuration tidak valid."
     exit 1
 
 fi
@@ -632,14 +902,30 @@ else
 fi
 
 # =============================================================================
-# Summary
+# Final Summary
 # =============================================================================
 
 log_section "BREBES-WAF Dependency Summary"
 
 echo
-echo "Component:"
+
+echo "Operating System:"
+echo "    ${PRETTY_NAME}"
+
 echo
+
+echo "Ubuntu Repository:"
+echo "    Main     : ${UBUNTU_MAIN_REPOSITORY}"
+echo "    Security : ${UBUNTU_SECURITY_REPOSITORY}"
+
+echo
+
+echo "Ubuntu Codename:"
+echo "    ${UBUNTU_CODENAME}"
+
+echo
+
+echo "Components:"
 
 if command_exists nginx; then
     echo "    [OK] Nginx"
@@ -662,7 +948,7 @@ fi
 if [[ "${CRS_FOUND}" == "true" ]]; then
     echo "    [OK] OWASP CRS"
 else
-    echo "    [WARN] OWASP CRS"
+    echo "    [FAIL] OWASP CRS"
 fi
 
 if command_exists git; then
@@ -684,9 +970,15 @@ else
 fi
 
 echo
+echo "APT Repository Backup:"
+echo "    ${CURRENT_BACKUP_DIR}"
+
+echo
+
 echo "============================================================"
 echo " BREBES-WAF Dependency Check Completed"
 echo "============================================================"
+
 echo
 
 log_ok "System siap untuk tahap konfigurasi BREBES-WAF."
@@ -694,5 +986,5 @@ log_ok "System siap untuk tahap konfigurasi BREBES-WAF."
 echo
 echo "Next step:"
 echo
-echo "    ./scripts/deployfirsttime.sh"
+echo "    ./scripts/deploy-first-time.sh"
 echo
