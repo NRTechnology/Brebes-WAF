@@ -1,103 +1,92 @@
 #!/bin/bash
+
 # =============================================================================
 # BREBES-WAF
-# Detection Log Analysis by Domain
+# =============================================================================
+# Script  : check-last-detection.sh
+# Version : 1.4.0
 #
-# File    : scripts/check-last-detection.sh
-# Version : 1.3.1
-# Author  : Brebes CSIRT
-#
-# Purpose:
-#   Analyze ModSecurity audit logs based on HTTP Host header.
+# Description:
+#   Analyze ModSecurity audit logs for a specific domain and date.
 #
 # Usage:
-#   ./scripts/check-last-detection.sh <domain>
-#   ./scripts/check-last-detection.sh <domain> <YYYYMMDD>
+#   ./check-last-detection.sh <domain> [YYYYMMDD]
 #
 # Example:
-#   ./scripts/check-last-detection.sh sppdkominfo.brebeskab.go.id
-#   ./scripts/check-last-detection.sh sppdkominfo.brebeskab.go.id 20260915
+#   ./check-last-detection.sh sppdkominfo.brebeskab.go.id
+#   ./check-last-detection.sh sppdkominfo.brebeskab.go.id 20260915
 #
-# Important:
-#   ModSecurity [hostname "..."] is NOT used as domain identity.
-#   Domain is obtained from "Host:" in audit log section B.
+# Audit log structure:
+#
+#   ---xxxx---A--
+#   ...
+#   ---xxxx---B--
+#   POST /path HTTP/1.1
+#   Host: example.brebeskab.go.id
+#   ...
+#   ---xxxx---H--
+#   ModSecurity: Access denied ... [id "2001001"] ...
+#   ...
+#
+# Domain detection is based on HTTP Host from section B.
+#
+# IMPORTANT:
+#   Do NOT use [hostname "..."] from section H to identify the domain.
+#   In the current BREBES-WAF environment that value can contain the
+#   backend/server IP instead of the requested HTTP Host.
 # =============================================================================
 
-set -euo pipefail
+set -u
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-LOG_BASE_DIR="/var/log/nginx/modsecurity"
+BASE_DIR="/var/log/nginx/modsecurity"
 
 # =============================================================================
-# Argument
+# Arguments
 # =============================================================================
 
-if [[ $# -lt 1 ]]; then
+DOMAIN="${1:-}"
+DATE="${2:-$(date +%Y%m%d)}"
 
+# =============================================================================
+# Usage
+# =============================================================================
+
+usage() {
     echo
     echo "Usage:"
-    echo
-    echo "    $0 <domain>"
+    echo "  $0 <domain> [YYYYMMDD]"
     echo
     echo "Example:"
+    echo "  $0 sppdkominfo.brebeskab.go.id"
+    echo "  $0 sppdkominfo.brebeskab.go.id 20260915"
     echo
-    echo "    $0 sppdkominfo.brebeskab.go.id"
-    echo
-    echo "Optional date:"
-    echo
-    echo "    $0 sppdkominfo.brebeskab.go.id 20260915"
-    echo
+}
 
-    exit 1
-fi
-
-DOMAIN="$1"
-
-# =============================================================================
-# Domain Validation
-# =============================================================================
-
-if [[ ! "${DOMAIN}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
-
-    echo
-    echo "[ERROR] Invalid domain name:"
-    echo "        ${DOMAIN}"
-    echo
-
+if [[ -z "${DOMAIN}" ]]; then
+    usage
     exit 1
 fi
 
 # =============================================================================
-# Date
+# Normalize domain
+# =============================================================================
+# Remove accidental whitespace and trailing dot.
+# Lowercase comparison is performed later.
 # =============================================================================
 
-if [[ $# -ge 2 ]]; then
-    DATE="$2"
-else
-    DATE=$(date +%Y%m%d)
-fi
+DOMAIN="$(printf '%s' "${DOMAIN}" | tr -d '\r\n' | xargs)"
+DOMAIN="${DOMAIN%.}"
 
-# =============================================================================
-# Date Validation
-# =============================================================================
-
-if [[ ! "${DATE}" =~ ^[0-9]{8}$ ]]; then
-
-    echo
-    echo "[ERROR] Invalid date format:"
-    echo "        ${DATE}"
-    echo
-    echo "Expected:"
-    echo "        YYYYMMDD"
-    echo
-
+if [[ -z "${DOMAIN}" ]]; then
+    usage
     exit 1
 fi
 
-LOG_DIR="${LOG_BASE_DIR}/${DATE}"
+LOG_DIR="${BASE_DIR}/${DATE}"
 
 # =============================================================================
 # Header
@@ -113,224 +102,296 @@ echo "Date   : ${DATE}"
 echo
 
 # =============================================================================
-# Check Log Directory
+# Validate log directory
 # =============================================================================
 
 if [[ ! -d "${LOG_DIR}" ]]; then
 
-    echo "[INFO] Detection log directory tidak ditemukan:"
+    echo "Log directory not found:"
+    echo "${LOG_DIR}"
     echo
-    echo "       ${LOG_DIR}"
-    echo
-
-    exit 0
-fi
-
-# =============================================================================
-# Find Log Files
-# =============================================================================
-
-mapfile -d '' LOG_FILES < <(
-    find "${LOG_DIR}" \
-        -type f \
-        -print0 |
-    sort -z
-)
-
-if [[ "${#LOG_FILES[@]}" -eq 0 ]]; then
-
-    echo "[INFO] Tidak ada log file pada:"
-    echo
-    echo "       ${LOG_DIR}"
+    echo "============================================================"
+    echo " Detection Analysis Completed"
+    echo "============================================================"
     echo
 
     exit 0
 fi
 
 # =============================================================================
-# Search Detection
+# Statistics
 # =============================================================================
 
-FOUND=false
+TOTAL_LOGS=0
+MATCHED_DOMAIN_LOGS=0
+DETECTION_LOGS=0
+BREBES_WAF_COUNT=0
+CRS_COUNT=0
 
-for LOG in "${LOG_FILES[@]}"
+# =============================================================================
+# Process audit logs
+# =============================================================================
+#
+# Use find -print0 so filenames containing spaces/special characters do not
+# break the loop.
+#
+# sort -z keeps the processing order deterministic.
+# =============================================================================
+
+while IFS= read -r -d '' LOG
 do
+
+    TOTAL_LOGS=$((TOTAL_LOGS + 1))
 
     # =========================================================================
     # Read audit log
     # =========================================================================
-
-    LOG_CONTENT=$(
-        cat "${LOG}" 2>/dev/null || true
-    )
-
-    [[ -z "${LOG_CONTENT}" ]] && continue
-
-    # =========================================================================
-    # Extract Host from section B
     #
-    # Example:
+    # ModSecurity audit logs may contain binary/NUL bytes.
     #
-    # ---xxxx---B--
-    # GET /api/test HTTP/1.1
-    # Host: sppdkominfo.brebeskab.go.id
-    #
+    # We only need printable audit-log text, therefore use strings.
+    # This also prevents Bash command-substitution warnings caused by NUL.
     # =========================================================================
 
-    REQUEST_HOST=$(
+    LOG_CONTENT="$(strings "${LOG}" 2>/dev/null || true)"
+
+    if [[ -z "${LOG_CONTENT}" ]]; then
+        continue
+    fi
+
+    # =========================================================================
+    # Extract HTTP Host from section B
+    # =========================================================================
+    #
+    # Expected:
+    #
+    #   ---xxxx---B--
+    #   POST /something HTTP/1.1
+    #   Host: example.brebeskab.go.id
+    #
+    # Stop when the next ModSecurity section is reached.
+    # =========================================================================
+
+    REQUEST_HOST="$(
         printf '%s\n' "${LOG_CONTENT}" |
         awk '
-            /^---.*---B--$/ {
-                in_request=1
-                next
-            }
+        /^---.*---B--$/ {
+            in_request=1
+            next
+        }
 
-            /^---.*---[A-Z]--$/ {
-                if (in_request) {
-                    exit
-                }
-            }
-
-            in_request && /^Host:[[:space:]]*/ {
-                sub(/^Host:[[:space:]]*/, "")
-                gsub(/\r/, "")
-                print
+        /^---.*---[A-Z]--$/ {
+            if (in_request) {
                 exit
             }
+        }
+
+        in_request && /^Host:[[:space:]]*/ {
+            sub(/^Host:[[:space:]]*/, "")
+            print
+            exit
+        }
         ' |
+        tr -d '\r' |
         xargs
-    )
+    )"
 
     # =========================================================================
-    # Skip when Host does not match requested domain
-    #
-    # Case insensitive.
+    # Skip if Host is missing
+    # =========================================================================
+
+    if [[ -z "${REQUEST_HOST}" ]]; then
+        continue
+    fi
+
+    # =========================================================================
+    # Normalize request host
+    # =========================================================================
+
+    REQUEST_HOST="${REQUEST_HOST%.}"
+
+    # =========================================================================
+    # Domain comparison
     # =========================================================================
 
     if [[ "${REQUEST_HOST,,}" != "${DOMAIN,,}" ]]; then
         continue
     fi
 
+    MATCHED_DOMAIN_LOGS=$((MATCHED_DOMAIN_LOGS + 1))
+
     # =========================================================================
     # Extract section H
+    # =========================================================================
     #
-    # Section H contains ModSecurity detection messages.
+    # Section H contains ModSecurity messages/detections.
     # =========================================================================
 
-    DETECTION_RESULT=$(
+    DETECTIONS="$(
         printf '%s\n' "${LOG_CONTENT}" |
         awk '
-            /^---.*---H--$/ {
-                in_detection=1
-                next
-            }
+        /^---.*---H--$/ {
+            in_detection=1
+            next
+        }
 
-            /^---.*---[A-Z]--$/ {
-                if (in_detection) {
-                    exit
-                }
+        /^---.*---[A-Z]--$/ {
+            if (in_detection) {
+                exit
             }
+        }
 
-            in_detection {
-                print
-            }
+        in_detection {
+            print
+        }
         '
-    )
-
-    [[ -z "${DETECTION_RESULT}" ]] && continue
+    )"
 
     # =========================================================================
-    # BREBES-WAF Detection
+    # Skip if section H is empty
     # =========================================================================
 
-    BREBES_WAF_RESULT=$(
-        printf '%s\n' "${DETECTION_RESULT}" |
-        grep -F "BREBES-WAF" ||
-        true
-    )
-
-    # =========================================================================
-    # OWASP CRS Detection
-    #
-    # CRS entries contain:
-    #
-    #   [id "XXXXXX"]
-    #
-    # Exclude BREBES-WAF.
-    # =========================================================================
-
-    CRS_RESULT=$(
-        printf '%s\n' "${DETECTION_RESULT}" |
-        grep 'id "' |
-        grep -v "BREBES-WAF" ||
-        true
-    )
-
-    # =========================================================================
-    # Skip if no detection
-    # =========================================================================
-
-    if [[ -z "${BREBES_WAF_RESULT}" ]] &&
-       [[ -z "${CRS_RESULT}" ]]; then
+    if [[ -z "${DETECTIONS}" ]]; then
         continue
     fi
 
-    FOUND=true
+    # =========================================================================
+    # Extract BREBES-WAF detections
+    # =========================================================================
+
+    BREBES_WAF="$(
+        printf '%s\n' "${DETECTIONS}" |
+        grep -F "BREBES-WAF" ||
+        true
+    )"
 
     # =========================================================================
-    # Display Detection
+    # Extract OWASP CRS detections
+    # =========================================================================
+    #
+    # CRS detection normally contains:
+    #
+    #   [id "941100"]
+    #
+    # and:
+    #
+    #   [ver "OWASP_CRS/3.3.5"]
+    #
+    # We exclude BREBES-WAF entries.
+    # =========================================================================
+
+    CRS="$(
+        printf '%s\n' "${DETECTIONS}" |
+        grep '\[id "' |
+        grep -v "BREBES-WAF" ||
+        true
+    )"
+
+    # =========================================================================
+    # If there is no actual BREBES-WAF or CRS detection, skip the log.
+    # =========================================================================
+
+    if [[ -z "${BREBES_WAF}" && -z "${CRS}" ]]; then
+        continue
+    fi
+
+    # =========================================================================
+    # Detection found
+    # =========================================================================
+
+    DETECTION_LOGS=$((DETECTION_LOGS + 1))
+
+    if [[ -n "${BREBES_WAF}" ]]; then
+        BREBES_WAF_COUNT=$(
+            printf '%s\n' "${BREBES_WAF}" |
+            grep -c "BREBES-WAF" ||
+            true
+        )
+
+        # Ensure numeric value
+        [[ -z "${BREBES_WAF_COUNT}" ]] && BREBES_WAF_COUNT=0
+    fi
+
+    if [[ -n "${CRS}" ]]; then
+        CRS_LINES=$(
+            printf '%s\n' "${CRS}" |
+            grep -c '\[id "' ||
+            true
+        )
+
+        [[ -z "${CRS_LINES}" ]] && CRS_LINES=0
+
+        CRS_COUNT=$((CRS_COUNT + CRS_LINES))
+    fi
+
+    # =========================================================================
+    # Display detection log
     # =========================================================================
 
     echo "============================================================"
     echo " Log File : ${LOG}"
     echo " Domain   : ${REQUEST_HOST}"
     echo "============================================================"
-    echo
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # BREBES-WAF
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
-    if [[ -n "${BREBES_WAF_RESULT}" ]]; then
+    if [[ -n "${BREBES_WAF}" ]]; then
 
+        echo
         echo "===== BREBES-WAF ====="
-        printf '%s\n' "${BREBES_WAF_RESULT}"
-        echo
+
+        printf '%s\n' "${BREBES_WAF}"
 
     fi
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # OWASP CRS
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
-    if [[ -n "${CRS_RESULT}" ]]; then
+    if [[ -n "${CRS}" ]]; then
 
-        echo "===== OWASP CRS ====="
-        printf '%s\n' "${CRS_RESULT}"
         echo
+        echo "===== OWASP CRS ====="
+
+        printf '%s\n' "${CRS}"
 
     fi
 
-done
+    echo
+
+done < <(
+    find "${LOG_DIR}" \
+        -type f \
+        -print0 2>/dev/null |
+    sort -z
+)
 
 # =============================================================================
-# No Detection
+# Summary
 # =============================================================================
 
-if [[ "${FOUND}" != "true" ]]; then
+echo "============================================================"
+echo " Detection Analysis Summary"
+echo "============================================================"
+echo
+echo "Domain                 : ${DOMAIN}"
+echo "Date                   : ${DATE}"
+echo "Total audit logs       : ${TOTAL_LOGS}"
+echo "Domain matched logs    : ${MATCHED_DOMAIN_LOGS}"
+echo "Detection logs         : ${DETECTION_LOGS}"
+echo "BREBES-WAF detections  : ${BREBES_WAF_COUNT}"
+echo "OWASP CRS detections   : ${CRS_COUNT}"
+echo
 
-    echo
-    echo "============================================================"
-    echo " Detection Result"
-    echo "============================================================"
-    echo
-    echo "Tidak ditemukan detection untuk domain:"
-    echo
-    echo "    ${DOMAIN}"
-    echo
-    echo "Tanggal:"
-    echo
-    echo "    ${DATE}"
+# =============================================================================
+# No detection
+# =============================================================================
+
+if [[ "${DETECTION_LOGS}" -eq 0 ]]; then
+
+    echo "No BREBES-WAF/OWASP CRS detection found."
     echo
 
 fi
@@ -339,8 +400,9 @@ fi
 # Completed
 # =============================================================================
 
-echo
 echo "============================================================"
 echo " Detection Analysis Completed"
 echo "============================================================"
 echo
+
+exit 0
