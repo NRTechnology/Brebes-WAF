@@ -5,8 +5,11 @@
 # Detection Log Analysis by Domain
 #
 # File    : scripts/check-last-detection.sh
-# Version : 1.2.0
+# Version : 1.2.1
 # Author  : Brebes CSIRT
+#
+# Purpose:
+#   Analyze ModSecurity detection logs based on domain name.
 #
 # Usage:
 #
@@ -19,6 +22,12 @@
 # Optional date:
 #
 #   ./scripts/check-last-detection.sh csirtlab.brebeskab.go.id 20260915
+#
+# Output:
+#   - Only log files containing detection are displayed.
+#   - BREBES-WAF detection is displayed separately.
+#   - OWASP CRS detection is displayed separately.
+#   - Log files without detection are skipped.
 #
 # =============================================================================
 
@@ -150,8 +159,8 @@ fi
 mapfile -d '' LOG_FILES < <(
     find "${LOG_DIR}" \
         -type f \
-        -print0 \
-    | sort -z
+        -print0 |
+    sort -z
 )
 
 
@@ -178,16 +187,74 @@ for LOG in "${LOG_FILES[@]}"
 do
 
     # -------------------------------------------------------------------------
+    # Read log content
+    # -------------------------------------------------------------------------
+
+    LOG_CONTENT=$(
+        strings "${LOG}" 2>/dev/null || true
+    )
+
+
+    # -------------------------------------------------------------------------
     # Check whether this log contains the requested domain
     # -------------------------------------------------------------------------
 
-    if ! strings "${LOG}" 2>/dev/null \
-        | grep -Fqi -- "${DOMAIN}"; then
+    if ! printf '%s\n' "${LOG_CONTENT}" |
+        grep -Fqi -- "${DOMAIN}"; then
 
         continue
 
     fi
 
+
+    # -------------------------------------------------------------------------
+    # BREBES-WAF Detection
+    #
+    # The domain is used to identify the relevant audit log.
+    # Once the log belongs to the requested domain, search the complete
+    # audit log for BREBES-WAF detection.
+    # -------------------------------------------------------------------------
+
+    BREBES_WAF_RESULT=$(
+        printf '%s\n' "${LOG_CONTENT}" |
+        grep -F "BREBES-WAF" ||
+        true
+    )
+
+
+    # -------------------------------------------------------------------------
+    # OWASP CRS Detection
+    #
+    # CRS detection normally contains:
+    #
+    #   id "XXXXXX"
+    #
+    # Exclude BREBES-WAF entries.
+    # -------------------------------------------------------------------------
+
+    CRS_RESULT=$(
+        printf '%s\n' "${LOG_CONTENT}" |
+        grep 'id "' |
+        grep -v "BREBES-WAF" ||
+        true
+    )
+
+
+    # -------------------------------------------------------------------------
+    # Skip log when there is no detection
+    # -------------------------------------------------------------------------
+
+    if [[ -z "${BREBES_WAF_RESULT}" ]] &&
+       [[ -z "${CRS_RESULT}" ]]; then
+
+        continue
+
+    fi
+
+
+    # -------------------------------------------------------------------------
+    # Detection found
+    # -------------------------------------------------------------------------
 
     FOUND=true
 
@@ -201,18 +268,11 @@ do
     # BREBES-WAF
     # -------------------------------------------------------------------------
 
-    echo
-    echo "===== BREBES-WAF ====="
+    if [[ -n "${BREBES_WAF_RESULT}" ]]; then
 
-    if strings "${LOG}" 2>/dev/null \
-        | grep -Fi -- "${DOMAIN}" \
-        | grep -F "BREBES-WAF"; then
-
-        :
-
-    else
-
-        echo "No BREBES-WAF detection."
+        echo
+        echo "===== BREBES-WAF ====="
+        echo "${BREBES_WAF_RESULT}"
 
     fi
 
@@ -221,19 +281,11 @@ do
     # OWASP CRS
     # -------------------------------------------------------------------------
 
-    echo
-    echo "===== OWASP CRS ====="
+    if [[ -n "${CRS_RESULT}" ]]; then
 
-    if strings "${LOG}" 2>/dev/null \
-        | grep -Fi -- "${DOMAIN}" \
-        | grep 'id "' \
-        | grep -v "BREBES-WAF"; then
-
-        :
-
-    else
-
-        echo "No OWASP CRS detection."
+        echo
+        echo "===== OWASP CRS ====="
+        echo "${CRS_RESULT}"
 
     fi
 
