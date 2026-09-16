@@ -2,8 +2,7 @@
 
 Semua perubahan penting pada project **BREBES-WAF** dicatat dalam file ini.
 
-Format changelog mengikuti prinsip **Keep a Changelog** dan
-**Semantic Versioning**.
+Format changelog mengikuti prinsip **Keep a Changelog** dan **Semantic Versioning**.
 
 ---
 
