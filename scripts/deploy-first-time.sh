@@ -1,1677 +1,1325 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# =============================================================================
+# ============================================================
 # BREBES-WAF
-# First-Time Installation & Deployment Script
+# First Time Deployment Script
 #
-# File    : scripts/deploy-first-time.sh
-# Version : 1.2.0
-# Author  : Brebes CSIRT
+# Version : 1.3.0
+# Date    : 2026-09-15
 #
 # Purpose:
-#   First-time installation, dependency setup, configuration and deployment
-#   of BREBES-WAF.
+#   - Prepare dependencies
+#   - Install/enable ModSecurity for Nginx
+#   - Configure ModSecurity baseline
+#   - Configure OWASP CRS
+#   - Load BREBES-WAF rules
+#   - Configure Nginx reverser log format
+#   - Validate ModSecurity audit log configuration
+#   - Validate Nginx configuration
 #
-# Supported:
-#   Ubuntu 22.04+
+# Performance policy:
+#   SecResponseBodyAccess Off
 #
-# Components:
-#   - Nginx
-#   - ModSecurity v3
-#   - Nginx ModSecurity Connector
-#   - Nginx NDK module
-#   - OWASP CRS
-#   - BREBES-WAF Rules
-#   - Git
-#   - Curl
-#   - CA Certificates
-#   - Unzip
-#
-# Installation:
-#
-#   cd /opt/Brebes-WAF
-#   sudo ./scripts/deploy-first-time.sh
-#
-# After first installation:
-#
-#   ./scripts/deploy.sh
-#
-# =============================================================================
+# IMPORTANT:
+#   Response-body inspection is intentionally disabled.
+#   CRS response rules such as 951240 may still exist in CRS,
+#   but BREBES-WAF does not enable response-body inspection.
+# ============================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
+# ============================================================
+# VARIABLES
+# ============================================================
 
-# =============================================================================
-# Configuration
-# =============================================================================
+SCRIPT_VERSION="1.3.0"
+RELEASE_DATE="2026-09-15"
 
-BREBES_WAF_HOME="/opt/Brebes-WAF"
+PROJECT_DIR="/opt/Brebes-WAF"
 
-NGINX_MAIN_CONF="/etc/nginx/nginx.conf"
+RULES_DIR="${PROJECT_DIR}/rules"
 
-MODSECURITY_CONF="/etc/nginx/modsecurity.conf"
-MODSECURITY_INCLUDE="/etc/nginx/modsecurity_includes.conf"
+NGINX_MAIN_CONFIG="/etc/nginx/nginx.conf"
 
-MODSECURITY_DIR="/etc/nginx/modsecurity"
-CRS_SYSTEM_DIR="${MODSECURITY_DIR}"
-CRS_LOAD_FILE="${CRS_SYSTEM_DIR}/crs-load.conf"
-CRS_REPOSITORY_FILE="${BREBES_WAF_HOME}/nginx/modsecurity/crs-load.conf"
+MODSEC_DIR="/etc/nginx"
+MODSEC_CONFIG="${MODSEC_DIR}/modsecurity.conf"
+MODSEC_INCLUDE="${MODSEC_DIR}/modsecurity_includes.conf"
 
-RULES_DIR="${BREBES_WAF_HOME}/rules"
+MODSEC_LOG_DIR="/var/log/nginx/modsecurity"
+MODSEC_AUDIT_LOG="${MODSEC_LOG_DIR}/audit.log"
+MODSEC_DEBUG_LOG="${MODSEC_LOG_DIR}/debug.log"
 
-UBUNTU_MAIN_REPOSITORY="http://archive.ubuntu.com/ubuntu"
-UBUNTU_SECURITY_REPOSITORY="http://security.ubuntu.com/ubuntu"
+CRS_SYSTEM_DIR="/usr/share/modsecurity-crs"
+CRS_RULES_DIR="${CRS_SYSTEM_DIR}/rules"
 
-APT_BACKUP_DIR="/root/brebes-waf-apt-backup"
+CRS_GENERATED_LOAD="/etc/nginx/modsecurity-crs-load.conf"
+BREBES_RULES_LOAD="/etc/nginx/brebes-waf-rules.conf"
 
-NGINX_BACKUP_DIR="/root/brebes-waf-nginx-backup"
+BACKUP_ROOT="/var/backups/brebes-waf"
 
-MODSECURITY_MODULE_PACKAGE="libnginx-mod-http-modsecurity"
-NGINX_NDK_PACKAGE="libnginx-mod-http-ndk"
-CRS_PACKAGE="modsecurity-crs"
+TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
+BACKUP_DIR="${BACKUP_ROOT}/${TIMESTAMP}"
 
-MODSECURITY_MODULE_PATH="/usr/lib/nginx/modules/ngx_http_modsecurity_module.so"
-NDK_MODULE_PATH="/usr/lib/nginx/modules/ndk_http_module.so"
-
-MODSECURITY_MODULE_CONFIG="/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
-MODSECURITY_MODULE_AVAILABLE="/etc/nginx/modules-available/mod-http-modsecurity.conf"
-
-
-# =============================================================================
-# Colors
-# =============================================================================
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-log_info()
-{
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-
-log_ok()
-{
-    echo -e "${GREEN}[ OK ]${NC} $1"
-}
-
-
-log_warn()
-{
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-
-log_error()
-{
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-
-log_section()
-{
-    echo
-    echo "============================================================"
-    echo " $1"
-    echo "============================================================"
-}
-
-
-command_exists()
-{
-    command -v "$1" >/dev/null 2>&1
-}
-
-
-package_installed()
-{
-    dpkg-query -W -f='${Status}' "$1" 2>/dev/null \
-        | grep -q "install ok installed"
-}
-
-
-die()
-{
-    log_error "$1"
-    exit 1
-}
-
-
-# =============================================================================
-# Root Check
-# =============================================================================
-
-if [[ "${EUID}" -ne 0 ]]; then
-
-    log_error "Script harus dijalankan sebagai root."
-
-    echo
-    echo "Gunakan:"
-    echo
-    echo "    sudo $0"
-    echo
-
-    exit 1
-
-fi
-
-
-# =============================================================================
-# BREBES-WAF Repository Check
-# =============================================================================
-
-log_section "BREBES-WAF Repository Check"
-
-if [[ ! -d "${BREBES_WAF_HOME}" ]]; then
-
-    die "BREBES-WAF repository tidak ditemukan:
-
-    ${BREBES_WAF_HOME}"
-
-fi
-
-log_ok "BREBES-WAF repository ditemukan:"
-echo "    ${BREBES_WAF_HOME}"
-
-
-if [[ ! -d "${RULES_DIR}" ]]; then
-
-    die "BREBES-WAF rules directory tidak ditemukan:
-
-    ${RULES_DIR}"
-
-fi
-
-log_ok "BREBES-WAF rules directory ditemukan."
-
-
-# =============================================================================
-# Operating System Check
-# =============================================================================
-
-log_section "Operating System Check"
-
-if [[ ! -f /etc/os-release ]]; then
-
-    die "/etc/os-release tidak ditemukan."
-
-fi
-
-source /etc/os-release
-
-echo "OS            : ${PRETTY_NAME:-unknown}"
-echo "ID            : ${ID:-unknown}"
-echo "Version       : ${VERSION_ID:-unknown}"
-echo "Architecture  : $(dpkg --print-architecture)"
-
-
-if [[ "${ID:-}" != "ubuntu" ]]; then
-
-    die "Operating system bukan Ubuntu.
-
-BREBES-WAF installer ini hanya mendukung Ubuntu."
-
-fi
-
-
-UBUNTU_CODENAME="${VERSION_CODENAME:-}"
-
-if [[ -z "${UBUNTU_CODENAME}" ]] && command_exists lsb_release; then
-
-    UBUNTU_CODENAME=$(lsb_release -sc)
-
-fi
-
-
-if [[ -z "${UBUNTU_CODENAME}" ]]; then
-
-    die "Ubuntu codename tidak dapat dideteksi."
-
-fi
-
-
-echo "Codename      : ${UBUNTU_CODENAME}"
-
-
-case "${UBUNTU_CODENAME}" in
-
-    jammy)
-
-        log_ok "Ubuntu 22.04 Jammy Jellyfish detected."
-
-        ;;
-
-    noble)
-
-        log_ok "Ubuntu 24.04 Noble Numbat detected."
-
-        ;;
-
-    *)
-
-        log_warn "Ubuntu version/codename belum diuji secara khusus:"
-        echo "    ${UBUNTU_CODENAME}"
-
-        ;;
-
-esac
-
-
-# =============================================================================
-# APT Check
-# =============================================================================
-
-log_section "APT Check"
-
-if ! command_exists apt-get; then
-
-    die "apt-get tidak ditemukan."
-
-fi
-
-log_ok "apt-get tersedia."
-
-
-# =============================================================================
-# Backup APT Repository Configuration
-# =============================================================================
-
-log_section "APT Repository Backup"
-
-BACKUP_TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
-
-CURRENT_BACKUP_DIR="${APT_BACKUP_DIR}/${BACKUP_TIMESTAMP}"
-
-mkdir -p "${CURRENT_BACKUP_DIR}"
-
-log_info "Backup repository configuration..."
-
-
-if [[ -f /etc/apt/sources.list ]]; then
-
-    cp -a \
-        /etc/apt/sources.list \
-        "${CURRENT_BACKUP_DIR}/sources.list"
-
-    log_ok "Backed up /etc/apt/sources.list"
-
-fi
-
-
-if [[ -d /etc/apt/sources.list.d ]]; then
-
-    cp -a \
-        /etc/apt/sources.list.d \
-        "${CURRENT_BACKUP_DIR}/sources.list.d"
-
-    log_ok "Backed up /etc/apt/sources.list.d"
-
-fi
-
-
-echo
-echo "APT Backup:"
-echo "    ${CURRENT_BACKUP_DIR}"
-
-
-# =============================================================================
-# Ubuntu Repository Configuration
-# =============================================================================
-
-log_section "Ubuntu Repository Configuration"
-
-UBUNTU_SOURCES_FILE="/etc/apt/sources.list.d/ubuntu.sources"
-
-
-if [[ -f "${UBUNTU_SOURCES_FILE}" ]]; then
-
-    log_info "Ubuntu Deb822 repository detected:"
-    echo "    ${UBUNTU_SOURCES_FILE}"
-
-    cat > "${UBUNTU_SOURCES_FILE}" <<EOF
-Types: deb
-URIs: ${UBUNTU_MAIN_REPOSITORY}
-Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-backports
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-Types: deb
-URIs: ${UBUNTU_SECURITY_REPOSITORY}
-Suites: ${UBUNTU_CODENAME}-security
-Components: main restricted universe multiverse
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-EOF
-
-    log_ok "Ubuntu repository dikonfigurasi ke official Ubuntu repository."
-
-else
-
-    log_info "Menggunakan traditional APT sources.list format."
-
-    cat > /etc/apt/sources.list <<EOF
-deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME} main restricted universe multiverse
-deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME}-updates main restricted universe multiverse
-deb ${UBUNTU_MAIN_REPOSITORY} ${UBUNTU_CODENAME}-backports main restricted universe multiverse
-deb ${UBUNTU_SECURITY_REPOSITORY} ${UBUNTU_CODENAME}-security main restricted universe multiverse
-EOF
-
-    log_ok "Ubuntu repository dikonfigurasi ke official Ubuntu repository."
-
-fi
-
-
-# =============================================================================
-# Disable Existing Ubuntu Mirror Configuration
-# =============================================================================
-
-log_section "Ubuntu Mirror Check"
-
-if [[ -d /etc/apt/sources.list.d ]]; then
-
-    shopt -s nullglob
-
-    for SOURCE_FILE in /etc/apt/sources.list.d/*.list
-    do
-
-        if grep -Eqi \
-            'archive\.ubuntu\.com|[a-z0-9.-]+\.ubuntu\.com|ports\.ubuntu\.com' \
-            "${SOURCE_FILE}" 2>/dev/null; then
-
-            log_info "Ubuntu repository ditemukan di:"
-            echo "    ${SOURCE_FILE}"
-
-            if [[ "${SOURCE_FILE}" != "/etc/apt/sources.list.d/ubuntu.list" ]]; then
-
-                BACKUP_FILE="${SOURCE_FILE}.brebes-waf-backup"
-
-                cp -a \
-                    "${SOURCE_FILE}" \
-                    "${BACKUP_FILE}"
-
-                sed -i \
-                    -E 's/^[[:space:]]*deb[[:space:]]/# BREBES-WAF disabled: deb/' \
-                    "${SOURCE_FILE}"
-
-                log_ok "Ubuntu mirror lama dinonaktifkan:"
-                echo "    ${SOURCE_FILE}"
-
-            fi
-
-        fi
-
-    done
-
-    shopt -u nullglob
-
-fi
-
-
-# =============================================================================
-# Show Active Ubuntu Repository
-# =============================================================================
-
-log_section "Active Ubuntu Repository"
-
-if [[ -f /etc/apt/sources.list ]]; then
-
-    echo
-    echo "--- /etc/apt/sources.list ---"
-
-    grep -E \
-        '^[[:space:]]*deb ' \
-        /etc/apt/sources.list \
-        || true
-
-fi
-
-
-if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-
-    echo
-    echo "--- /etc/apt/sources.list.d/ubuntu.sources ---"
-
-    cat /etc/apt/sources.list.d/ubuntu.sources
-
-fi
-
-
-# =============================================================================
-# APT Update
-# =============================================================================
-
-log_section "APT Update"
-
-log_info "Updating Ubuntu package index..."
-
-apt-get update
-
-log_ok "APT update berhasil."
-
-
-# =============================================================================
-# Detect ModSecurity Library Package
-# =============================================================================
-
-log_section "ModSecurity Package Detection"
-
-MODSECURITY_LIBRARY_PACKAGE=""
-
-if apt-cache show libmodsecurity3 >/dev/null 2>&1; then
-
-    MODSECURITY_LIBRARY_PACKAGE="libmodsecurity3"
-
-elif apt-cache show libmodsecurity3t64 >/dev/null 2>&1; then
-
-    MODSECURITY_LIBRARY_PACKAGE="libmodsecurity3t64"
-
-else
-
-    die "Package ModSecurity v3 tidak tersedia pada repository."
-
-fi
-
-
-log_ok "ModSecurity library package:"
-echo "    ${MODSECURITY_LIBRARY_PACKAGE}"
-
-
-# =============================================================================
-# Detect ModSecurity Development Package
-# =============================================================================
-
-MODSECURITY_DEV_PACKAGE=""
-
-if apt-cache show libmodsecurity-dev >/dev/null 2>&1; then
-
-    MODSECURITY_DEV_PACKAGE="libmodsecurity-dev"
-
-else
-
-    log_warn "libmodsecurity-dev tidak tersedia."
-    log_warn "Development package tidak wajib untuk runtime BREBES-WAF."
-
-fi
-
-
-# =============================================================================
-# Required Packages
-# =============================================================================
-
-REQUIRED_PACKAGES=(
+APT_PACKAGES=(
     nginx
     curl
     ca-certificates
-    git
-    unzip
-    "${MODSECURITY_MODULE_PACKAGE}"
-    "${MODSECURITY_LIBRARY_PACKAGE}"
-    "${NGINX_NDK_PACKAGE}"
-    "${CRS_PACKAGE}"
+    gnupg
+    lsb-release
+    apt-transport-https
 )
 
+# ============================================================
+# COLORS
+# ============================================================
 
-if [[ -n "${MODSECURITY_DEV_PACKAGE}" ]]; then
-
-    REQUIRED_PACKAGES+=(
-        "${MODSECURITY_DEV_PACKAGE}"
-    )
-
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    CYAN=''
+    NC=''
 fi
 
+# ============================================================
+# LOG FUNCTIONS
+# ============================================================
 
-# =============================================================================
-# Package Dependency Check
-# =============================================================================
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $*"
+}
 
-log_section "Package Dependency Check"
+log_ok() {
+    echo -e "${GREEN}[ OK ]${NC} $*"
+}
 
-MISSING_PACKAGES=()
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $*"
+}
 
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $*" >&2
+}
 
-for PACKAGE in "${REQUIRED_PACKAGES[@]}"
-do
-
-    if package_installed "${PACKAGE}"; then
-
-        VERSION=$(dpkg-query \
-            -W \
-            -f='${Version}' \
-            "${PACKAGE}" \
-            2>/dev/null \
-            || echo "unknown")
-
-        log_ok "${PACKAGE} [${VERSION}]"
-
-    else
-
-        log_warn "${PACKAGE} belum terinstall."
-
-        MISSING_PACKAGES+=(
-            "${PACKAGE}"
-        )
-
-    fi
-
-done
-
-
-# =============================================================================
-# Install Missing Packages
-# =============================================================================
-
-if [[ "${#MISSING_PACKAGES[@]}" -gt 0 ]]; then
-
-    log_section "Installing Missing Packages"
-
-    echo "Package yang akan diinstall:"
+log_step() {
     echo
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${CYAN} $*${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+}
 
-    for PACKAGE in "${MISSING_PACKAGES[@]}"
-    do
+# ============================================================
+# ERROR HANDLER
+# ============================================================
 
-        echo "    - ${PACKAGE}"
+CURRENT_STEP="initialization"
 
-    done
+on_error() {
+    local exit_code=$?
 
     echo
-
-    apt-get install -y \
-        "${MISSING_PACKAGES[@]}"
-
-    log_ok "Missing packages berhasil diinstall."
-
-else
-
-    log_ok "Semua package dependency sudah tersedia."
-
-fi
-
-
-# =============================================================================
-# Nginx Check
-# =============================================================================
-
-log_section "Nginx Check"
-
-if command_exists nginx; then
-
-    NGINX_VERSION=$(nginx -v 2>&1 | sed 's/^nginx version: //')
-
-    log_ok "Nginx tersedia."
-    echo "    Version: ${NGINX_VERSION}"
-
-else
-
-    die "Nginx tidak ditemukan setelah installation."
-
-fi
-
-
-# =============================================================================
-# ModSecurity v3 Library Check
-# =============================================================================
-
-log_section "ModSecurity v3 Check"
-
-MODSECURITY_FOUND=false
-
-
-if ldconfig -p 2>/dev/null | grep -q "libmodsecurity"; then
-
-    log_ok "ModSecurity v3 library ditemukan."
-
-    ldconfig -p 2>/dev/null \
-        | grep "libmodsecurity" \
-        || true
-
-    MODSECURITY_FOUND=true
-
-fi
-
-
-if package_installed "libmodsecurity3"; then
-
-    VERSION=$(dpkg-query \
-        -W \
-        -f='${Version}' \
-        libmodsecurity3 \
-        2>/dev/null \
-        || echo "unknown")
-
-    log_ok "libmodsecurity3 installed."
-    echo "    Version: ${VERSION}"
-
-    MODSECURITY_FOUND=true
-
-fi
-
-
-if package_installed "libmodsecurity3t64"; then
-
-    VERSION=$(dpkg-query \
-        -W \
-        -f='${Version}' \
-        libmodsecurity3t64 \
-        2>/dev/null \
-        || echo "unknown")
-
-    log_ok "libmodsecurity3t64 installed."
-    echo "    Version: ${VERSION}"
-
-    MODSECURITY_FOUND=true
-
-fi
-
-
-if [[ "${MODSECURITY_FOUND}" != "true" ]]; then
-
-    die "ModSecurity v3 library tidak ditemukan."
-
-fi
-
-
-# =============================================================================
-# ModSecurity Nginx Module Check
-# =============================================================================
-
-log_section "Nginx ModSecurity Module Check"
-
-MODSECURITY_MODULE=""
-
-
-if [[ -f "${MODSECURITY_MODULE_PATH}" ]]; then
-
-    MODSECURITY_MODULE="${MODSECURITY_MODULE_PATH}"
-
-    log_ok "ModSecurity Nginx module ditemukan:"
-    echo "    ${MODSECURITY_MODULE}"
-
-else
-
-    die "ngx_http_modsecurity_module.so tidak ditemukan."
-
-fi
-
-
-# =============================================================================
-# Nginx NDK Module Check
-# =============================================================================
-
-log_section "Nginx NDK Module Check"
-
-
-if [[ -f "${NDK_MODULE_PATH}" ]]; then
-
-    log_ok "Nginx NDK module ditemukan:"
-    echo "    ${NDK_MODULE_PATH}"
-
-else
-
-    log_warn "Nginx NDK module tidak ditemukan:"
-    echo "    ${NDK_MODULE_PATH}"
-
-fi
-
-
-# =============================================================================
-# Enable ModSecurity Nginx Module
-# =============================================================================
-
-log_section "ModSecurity Module Configuration"
-
-
-if [[ -f "${MODSECURITY_MODULE_CONFIG}" ]]; then
-
-    log_ok "ModSecurity module configuration tersedia:"
-    echo "    ${MODSECURITY_MODULE_CONFIG}"
-
-else
-
-    if [[ -f "${MODSECURITY_MODULE_AVAILABLE}" ]]; then
-
-        log_info "Mengaktifkan ModSecurity Nginx module..."
-
-        ln -sf \
-            "${MODSECURITY_MODULE_AVAILABLE}" \
-            "${MODSECURITY_MODULE_CONFIG}"
-
-        log_ok "ModSecurity module configuration diaktifkan."
-
-    else
-
-        die "ModSecurity module configuration tidak ditemukan:
-
-    ${MODSECURITY_MODULE_AVAILABLE}"
-
+    log_error "Deployment gagal."
+    log_error "Step       : ${CURRENT_STEP}"
+    log_error "Exit code  : ${exit_code}"
+
+    if [[ -d "${BACKUP_DIR}" ]]; then
+        log_warn "Backup tersedia di:"
+        echo "  ${BACKUP_DIR}"
     fi
 
-fi
+    exit "${exit_code}"
+}
 
+trap on_error ERR
 
-# =============================================================================
-# Nginx Backup
-# =============================================================================
+# ============================================================
+# ROOT CHECK
+# ============================================================
 
-log_section "Nginx Configuration Backup"
+require_root() {
+    CURRENT_STEP="root privilege check"
 
-NGINX_BACKUP_TIMESTAMP=$(date '+%Y%m%d-%H%M%S')
+    if [[ "${EUID}" -ne 0 ]]; then
+        log_error "Script ini harus dijalankan sebagai root."
+        exit 1
+    fi
 
-CURRENT_NGINX_BACKUP_DIR="${NGINX_BACKUP_DIR}/${NGINX_BACKUP_TIMESTAMP}"
+    log_ok "Running as root"
+}
 
-mkdir -p "${CURRENT_NGINX_BACKUP_DIR}"
+# ============================================================
+# PROJECT CHECK
+# ============================================================
 
+check_project() {
+    CURRENT_STEP="project directory check"
 
-if [[ -f "${NGINX_MAIN_CONF}" ]]; then
+    if [[ ! -d "${PROJECT_DIR}" ]]; then
+        log_error "Project BREBES-WAF tidak ditemukan:"
+        echo "  ${PROJECT_DIR}"
+        exit 1
+    fi
 
-    cp -a \
-        "${NGINX_MAIN_CONF}" \
-        "${CURRENT_NGINX_BACKUP_DIR}/nginx.conf"
+    if [[ ! -d "${RULES_DIR}" ]]; then
+        log_error "Rules directory tidak ditemukan:"
+        echo "  ${RULES_DIR}"
+        exit 1
+    fi
 
-    log_ok "Backup nginx.conf dibuat:"
-    echo "    ${CURRENT_NGINX_BACKUP_DIR}/nginx.conf"
+    log_ok "Project directory : ${PROJECT_DIR}"
+    log_ok "Rules directory   : ${RULES_DIR}"
+}
 
-fi
+# ============================================================
+# SYSTEM INFORMATION
+# ============================================================
 
+show_system_info() {
+    CURRENT_STEP="system information"
 
-# =============================================================================
-# Prepare ModSecurity Directory
-# =============================================================================
+    echo
+    echo "BREBES-WAF First Time Deployment"
+    echo "Version      : ${SCRIPT_VERSION}"
+    echo "Release Date : ${RELEASE_DATE}"
+    echo
 
-log_section "ModSecurity Directory"
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
 
-mkdir -p "${MODSECURITY_DIR}"
+        echo "OS           : ${PRETTY_NAME:-unknown}"
+        echo "Architecture : $(dpkg --print-architecture 2>/dev/null || uname -m)"
+    fi
 
-chmod 0755 "${MODSECURITY_DIR}"
+    echo "Hostname     : $(hostname)"
+    echo "Kernel       : $(uname -r)"
+    echo
+}
 
-log_ok "ModSecurity directory tersedia:"
-echo "    ${MODSECURITY_DIR}"
+# ============================================================
+# APT UPDATE
+# ============================================================
 
+apt_update() {
+    CURRENT_STEP="APT update"
 
-# =============================================================================
-# Prepare ModSecurity Configuration
-# =============================================================================
+    log_info "Updating APT package index..."
 
-log_section "ModSecurity Configuration"
+    apt-get update
 
+    log_ok "APT package index updated"
+}
 
-if [[ -f "${MODSECURITY_CONF}" ]]; then
+# ============================================================
+# BASIC DEPENDENCIES
+# ============================================================
 
-    log_ok "ModSecurity configuration sudah tersedia:"
-    echo "    ${MODSECURITY_CONF}"
+install_basic_dependencies() {
+    CURRENT_STEP="basic dependency installation"
 
-else
+    log_info "Installing basic dependencies..."
 
-    log_info "Membuat ModSecurity configuration..."
+    DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y "${APT_PACKAGES[@]}"
 
-    cat > "${MODSECURITY_CONF}" <<'EOF'
-# =============================================================================
-# BREBES-WAF
-# ModSecurity v3 Base Configuration
-# =============================================================================
+    log_ok "Basic dependencies installed"
+}
+
+# ============================================================
+# MODSECURITY
+# ============================================================
+
+install_modsecurity() {
+    CURRENT_STEP="ModSecurity package installation"
+
+    local modsec_pkg=""
+
+    if apt-cache show libmodsecurity3t64 >/dev/null 2>&1; then
+        modsec_pkg="libmodsecurity3t64"
+    elif apt-cache show libmodsecurity3 >/dev/null 2>&1; then
+        modsec_pkg="libmodsecurity3"
+    fi
+
+    if [[ -z "${modsec_pkg}" ]]; then
+        log_error "Paket libmodsecurity3/libmodsecurity3t64 tidak ditemukan."
+        exit 1
+    fi
+
+    log_info "Detected ModSecurity package: ${modsec_pkg}"
+
+    DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y \
+        "${modsec_pkg}" \
+        libnginx-mod-http-modsecurity
+
+    log_ok "ModSecurity installed"
+}
+
+# ============================================================
+# ENABLE NGINX MODSECURITY MODULE
+# ============================================================
+
+enable_modsecurity_module() {
+    CURRENT_STEP="Nginx ModSecurity module"
+
+    local module_conf="/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
+
+    if [[ -f "${module_conf}" ]]; then
+        log_ok "Nginx ModSecurity module already enabled"
+        return
+    fi
+
+    local available_conf="/usr/share/nginx/modules-available/mod-http-modsecurity.conf"
+
+    if [[ -f "${available_conf}" ]]; then
+        ln -s "${available_conf}" "${module_conf}"
+        log_ok "Enabled Nginx ModSecurity module"
+        return
+    fi
+
+    local found_conf
+
+    found_conf="$(
+        find /usr/share/nginx/modules-available \
+            -maxdepth 1 \
+            -type f \
+            -name '*modsecurity*.conf' \
+            | head -n 1
+    )"
+
+    if [[ -n "${found_conf}" ]]; then
+        ln -s "${found_conf}" "${module_conf}"
+
+        log_ok "Enabled Nginx ModSecurity module:"
+        echo "  ${found_conf}"
+        return
+    fi
+
+    log_error "Konfigurasi module ModSecurity Nginx tidak ditemukan."
+    exit 1
+}
+
+# ============================================================
+# PREPARE LOG DIRECTORY
+# ============================================================
+
+prepare_log_directory() {
+    CURRENT_STEP="ModSecurity log directory"
+
+    mkdir -p "${MODSEC_LOG_DIR}"
+
+    chown root:adm "${MODSEC_LOG_DIR}" 2>/dev/null || true
+    chmod 0750 "${MODSEC_LOG_DIR}"
+
+    touch "${MODSEC_AUDIT_LOG}"
+    touch "${MODSEC_DEBUG_LOG}"
+
+    chown www-data:adm "${MODSEC_AUDIT_LOG}" 2>/dev/null || true
+    chown www-data:adm "${MODSEC_DEBUG_LOG}" 2>/dev/null || true
+
+    chmod 0640 "${MODSEC_AUDIT_LOG}"
+    chmod 0640 "${MODSEC_DEBUG_LOG}"
+
+    log_ok "ModSecurity log directory prepared:"
+    echo "  ${MODSEC_LOG_DIR}"
+}
+
+# ============================================================
+# BACKUP
+# ============================================================
+
+backup_file() {
+    local file="$1"
+
+    if [[ ! -e "${file}" ]]; then
+        return 0
+    fi
+
+    local relative
+
+    if [[ "${file}" == /etc/* ]]; then
+        relative="${file#/etc/}"
+    else
+        relative="$(basename "${file}")"
+    fi
+
+    mkdir -p "${BACKUP_DIR}/$(dirname "${relative}")"
+
+    cp -a "${file}" \
+        "${BACKUP_DIR}/${relative}"
+}
+
+backup_existing_configuration() {
+    CURRENT_STEP="configuration backup"
+
+    mkdir -p "${BACKUP_DIR}"
+
+    log_info "Creating configuration backup:"
+    echo "  ${BACKUP_DIR}"
+
+    backup_file "${NGINX_MAIN_CONFIG}"
+    backup_file "${MODSEC_CONFIG}"
+    backup_file "${MODSEC_INCLUDE}"
+    backup_file "${CRS_GENERATED_LOAD}"
+    backup_file "${BREBES_RULES_LOAD}"
+
+    if [[ -d /etc/nginx/sites-enabled ]]; then
+        mkdir -p "${BACKUP_DIR}/nginx/sites-enabled"
+
+        cp -a /etc/nginx/sites-enabled/. \
+            "${BACKUP_DIR}/nginx/sites-enabled/" \
+            2>/dev/null || true
+    fi
+
+    if [[ -d /etc/nginx/conf.d ]]; then
+        mkdir -p "${BACKUP_DIR}/nginx/conf.d"
+
+        cp -a /etc/nginx/conf.d/. \
+            "${BACKUP_DIR}/nginx/conf.d/" \
+            2>/dev/null || true
+    fi
+
+    log_ok "Configuration backup completed"
+}
+
+# ============================================================
+# MODSECURITY BASE CONFIG
+# ============================================================
+
+create_modsecurity_config() {
+    CURRENT_STEP="ModSecurity base configuration"
+
+    cat > "${MODSEC_CONFIG}" <<'EOF'
+# ============================================================
+# BREBES-WAF ModSecurity Base Configuration
+# ============================================================
 
 SecRuleEngine On
 
-SecRequestBodyAccess On
-SecResponseBodyAccess Off
+# ------------------------------------------------------------
+# Request Body
+# ------------------------------------------------------------
 
+SecRequestBodyAccess On
 SecRequestBodyLimit 13107200
 SecRequestBodyNoFilesLimit 131072
 SecRequestBodyLimitAction Reject
 
+# ------------------------------------------------------------
+# Response Body
+#
+# Intentionally OFF for BREBES-WAF performance.
+#
+# Manual tracing can be performed from application logs,
+# audit logs and reverse-proxy logs when required.
+# ------------------------------------------------------------
+
+SecResponseBodyAccess Off
+
+# ------------------------------------------------------------
+# PCRE
+# ------------------------------------------------------------
+
 SecPcreMatchLimit 100000
 SecPcreMatchLimitRecursion 100000
 
+# ------------------------------------------------------------
+# Audit Logging
+# ------------------------------------------------------------
+
 SecAuditEngine RelevantOnly
+
 SecAuditLogRelevantStatus "^(?:5|4(?!04))"
 
 SecAuditLogParts ABIJDEFHZ
+
 SecAuditLogType Serial
+
 SecAuditLog /var/log/nginx/modsecurity/audit.log
+
+# ------------------------------------------------------------
+# Debug Logging
+#
+# Keep disabled in production.
+# ------------------------------------------------------------
 
 SecDebugLog /var/log/nginx/modsecurity/debug.log
 SecDebugLogLevel 0
+
+# ------------------------------------------------------------
+# Temporary/Data Directory
+# ------------------------------------------------------------
 
 SecTmpDir /tmp
 SecDataDir /tmp
 EOF
 
-    chmod 0644 "${MODSECURITY_CONF}"
+    log_ok "Created ${MODSEC_CONFIG}"
+}
 
-    mkdir -p /var/log/nginx/modsecurity
+# ============================================================
+# CRS DISCOVERY
+# ============================================================
 
-    chmod 0755 /var/log/nginx/modsecurity
+find_crs() {
+    CURRENT_STEP="OWASP CRS discovery"
 
-    touch /var/log/nginx/modsecurity/audit.log
-    touch /var/log/nginx/modsecurity/debug.log
-
-    chown www-data:adm \
-        /var/log/nginx/modsecurity/audit.log \
-        /var/log/nginx/modsecurity/debug.log
-
-    chmod 0640 \
-        /var/log/nginx/modsecurity/audit.log \
-        /var/log/nginx/modsecurity/debug.log
-
-    log_ok "ModSecurity configuration dibuat."
-
-fi
-
-
-# =============================================================================
-# Prepare OWASP CRS
-# =============================================================================
-
-log_section "OWASP CRS Configuration"
-
-
-if [[ -f "${CRS_LOAD_FILE}" ]]; then
-
-    log_ok "System CRS load configuration ditemukan:"
-    echo "    ${CRS_LOAD_FILE}"
-
-elif [[ -f "${CRS_REPOSITORY_FILE}" ]]; then
-
-    log_info "System CRS load configuration belum tersedia."
-
-    log_info "Menggunakan repository CRS configuration:"
-
-    echo "    ${CRS_REPOSITORY_FILE}"
-
-    cp -a \
-        "${CRS_REPOSITORY_FILE}" \
-        "${CRS_LOAD_FILE}"
-
-    log_ok "CRS load configuration disalin ke:"
-    echo "    ${CRS_LOAD_FILE}"
-
-else
-
-    die "OWASP CRS load configuration tidak ditemukan.
-
-System:
-    ${CRS_LOAD_FILE}
-
-Repository:
-    ${CRS_REPOSITORY_FILE}"
-
-fi
-
-
-if [[ ! -s "${CRS_LOAD_FILE}" ]]; then
-
-    die "CRS load configuration kosong:
-
-    ${CRS_LOAD_FILE}"
-
-fi
-
-
-chmod 0644 "${CRS_LOAD_FILE}"
-
-log_ok "OWASP CRS load configuration siap."
-
-
-# =============================================================================
-# Detect OWASP CRS
-# =============================================================================
-
-CRS_FOUND=false
-
-if package_installed "${CRS_PACKAGE}"; then
-
-    CRS_VERSION=$(dpkg-query \
-        -W \
-        -f='${Version}' \
-        "${CRS_PACKAGE}" \
-        2>/dev/null \
-        || echo "unknown")
-
-    log_ok "OWASP CRS package installed."
-    echo "    Version: ${CRS_VERSION}"
-
-    CRS_FOUND=true
-
-fi
-
-
-CRS_LOCATIONS=(
-    "/usr/share/modsecurity-crs"
-    "/usr/share/modsecurity-crs/owasp-crs"
-    "/etc/modsecurity"
-    "/etc/nginx/modsecurity"
-)
-
-
-for CRS_PATH in "${CRS_LOCATIONS[@]}"
-do
-
-    if [[ -d "${CRS_PATH}" ]]; then
-
-        log_ok "CRS directory ditemukan:"
-        echo "    ${CRS_PATH}"
-
-        CRS_FOUND=true
-
+    if [[ ! -d "${CRS_RULES_DIR}" ]]; then
+        log_error "OWASP CRS rules directory tidak ditemukan:"
+        echo "  ${CRS_RULES_DIR}"
+        exit 1
     fi
 
-done
+    local count
 
+    count="$(
+        find "${CRS_RULES_DIR}" \
+            -type f \
+            -name '*.conf' \
+            | wc -l
+    )"
 
-if [[ "${CRS_FOUND}" != "true" ]]; then
+    if [[ "${count}" -eq 0 ]]; then
+        log_error "Tidak ada CRS rule (*.conf) ditemukan."
+        exit 1
+    fi
 
-    die "OWASP CRS tidak ditemukan."
+    log_ok "OWASP CRS rules found: ${count}"
+}
 
-fi
+# ============================================================
+# GENERATE RULE LOAD FILES
+# ============================================================
 
+generate_rule_load_files() {
+    CURRENT_STEP="ModSecurity rule load files"
 
-# =============================================================================
-# Discover BREBES-WAF Rules
-# =============================================================================
+    # --------------------------------------------------------
+    # OWASP CRS
+    # --------------------------------------------------------
 
-log_section "BREBES-WAF Rule Discovery"
+    : > "${CRS_GENERATED_LOAD}"
 
-
-if [[ ! -d "${RULES_DIR}" ]]; then
-
-    die "Rules directory tidak ditemukan:
-
-    ${RULES_DIR}"
-
-fi
-
-
-mapfile -d '' RULE_FILES < <(
-    find "${RULES_DIR}" \
-        -type f \
-        -name '*.conf' \
-        -print0 \
-    | sort -z
-)
-
-
-if [[ "${#RULE_FILES[@]}" -eq 0 ]]; then
-
-    die "Tidak ada BREBES-WAF rule (*.conf) ditemukan:
-
-    ${RULES_DIR}"
-
-fi
-
-
-log_ok "BREBES-WAF rules ditemukan:"
-echo "    ${#RULE_FILES[@]} file"
-
-
-for RULE_FILE in "${RULE_FILES[@]}"
-do
-
-    echo "    - ${RULE_FILE}"
-
-done
-
-
-# =============================================================================
-# Generate ModSecurity Include
-# =============================================================================
-
-log_section "Generate ModSecurity Include"
-
-
-TEMP_INCLUDE="${MODSECURITY_INCLUDE}.tmp.$$"
-
-rm -f "${TEMP_INCLUDE}"
-
-
-cat > "${TEMP_INCLUDE}" <<EOF
-# =============================================================================
-# BREBES-WAF
-# Generated ModSecurity Include
-#
-# DO NOT EDIT MANUALLY
-#
-# Generated by:
-#   scripts/deploy-first-time.sh
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# ModSecurity Base Configuration
-# -----------------------------------------------------------------------------
-
-include ${MODSECURITY_CONF}
-
-# -----------------------------------------------------------------------------
-# OWASP CRS
-# -----------------------------------------------------------------------------
-
-include ${CRS_LOAD_FILE}
-
-# -----------------------------------------------------------------------------
-# BREBES-WAF Rules
-# -----------------------------------------------------------------------------
+    cat >> "${CRS_GENERATED_LOAD}" <<'EOF'
+# ============================================================
+# BREBES-WAF - OWASP CRS Load
+# Generated automatically by deploy-first-time.sh
+# ============================================================
 
 EOF
 
-
-for RULE_FILE in "${RULE_FILES[@]}"
-do
-
-    printf 'include %s;\n' "${RULE_FILE}" >> "${TEMP_INCLUDE}"
-
-done
-
-
-if [[ ! -s "${TEMP_INCLUDE}" ]]; then
-
-    rm -f "${TEMP_INCLUDE}"
-
-    die "Gagal menghasilkan ModSecurity include."
-
-fi
-
-
-# =============================================================================
-# Backup Existing ModSecurity Include
-# =============================================================================
-
-if [[ -f "${MODSECURITY_INCLUDE}" ]]; then
-
-    cp -a \
-        "${MODSECURITY_INCLUDE}" \
-        "${MODSECURITY_INCLUDE}.bak"
-
-    log_ok "Backup ModSecurity include dibuat:"
-    echo "    ${MODSECURITY_INCLUDE}.bak"
-
-fi
-
-
-mv -f \
-    "${TEMP_INCLUDE}" \
-    "${MODSECURITY_INCLUDE}"
-
-chmod 0644 "${MODSECURITY_INCLUDE}"
-
-log_ok "ModSecurity include berhasil dibuat:"
-echo "    ${MODSECURITY_INCLUDE}"
-
-
-# =============================================================================
-# Nginx Global ModSecurity & Log Configuration
-# =============================================================================
-
-log_section "Nginx Global Security Configuration"
-
-
-if [[ ! -f "${NGINX_MAIN_CONF}" ]]; then
-
-    die "Nginx main configuration tidak ditemukan:
-
-    ${NGINX_MAIN_CONF}"
-
-fi
-
-
-# -----------------------------------------------------------------------------
-# Enable Global ModSecurity
-# -----------------------------------------------------------------------------
-
-if grep -Eq \
-    '^[[:space:]]*modsecurity[[:space:]]+on;' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "Global ModSecurity sudah aktif."
-
-else
-
-    log_info "Mengaktifkan Global ModSecurity pada http {}..."
-
-    sed -i '/^[[:space:]]*http[[:space:]]*{/a\
-\
-        ##\
-        # BREBES-WAF / ModSecurity\
-        ##\
-        modsecurity on;\
-        modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;\
-' "${NGINX_MAIN_CONF}"
-
-    log_ok "Global ModSecurity berhasil diaktifkan."
-
-fi
-
-
-# -----------------------------------------------------------------------------
-# Enable ModSecurity Rules File
-# -----------------------------------------------------------------------------
-
-if grep -Eq \
-    '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "ModSecurity rules file sudah dikonfigurasi."
-
-else
-
-    log_info "Menambahkan ModSecurity rules file..."
-
-    sed -i \
-        '/^[[:space:]]*modsecurity[[:space:]]\+on;/a\
-        modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;' \
-        "${NGINX_MAIN_CONF}"
-
-    log_ok "ModSecurity rules file berhasil dikonfigurasi."
-
-fi
-
-
-# -----------------------------------------------------------------------------
-# Enable reverser log_format
-# -----------------------------------------------------------------------------
-
-if grep -Eq \
-    '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "log_format reverser sudah tersedia."
-
-else
-
-    log_info "Menambahkan log_format reverser ke http {}..."
-
-    sed -i '/^[[:space:]]*http[[:space:]]*{/a\
-\
-        ##\
-        # BREBES Reverse Proxy Log Format\
-        ##\
-        log_format reverser\
-          '\''$remote_addr '\''\
-          '\''[$time_local] '\''\
-          '\''"$request" '\''\
-          '\''$status '\''\
-          '\''$body_bytes_sent '\''\
-          '\''"$http_referer" '\''\
-          '\''"$http_user_agent" '\''\
-          '\''host="$host" '\''\
-          '\''xff="$http_x_forwarded_for" '\''\
-          '\''rt=$request_time '\''\
-          '\''urt=$upstream_response_time '\''\
-          '\''upstream="$upstream_addr"'\'';\
-' "${NGINX_MAIN_CONF}"
-
-    log_ok "log_format reverser berhasil ditambahkan."
-
-fi
-
-
-# =============================================================================
-# Display Global Security Configuration
-# =============================================================================
-
-echo
-
-echo "Global ModSecurity configuration:"
-
-grep -E \
-    '^[[:space:]]*(modsecurity|modsecurity_rules_file)[[:space:]]+' \
-    "${NGINX_MAIN_CONF}" \
-    || true
-
-
-echo
-
-echo "reverser log format:"
-
-grep -A 12 \
-    -E '^[[:space:]]*log_format[[:space:]]+reverser' \
-    "${NGINX_MAIN_CONF}" \
-    || true
-
-
-# =============================================================================
-# Verify Generated ModSecurity Include
-# =============================================================================
-
-log_section "Verify ModSecurity Include"
-
-
-if [[ ! -f "${MODSECURITY_INCLUDE}" ]]; then
-
-    die "ModSecurity include tidak ditemukan:
-
-    ${MODSECURITY_INCLUDE}"
-
-fi
-
-
-if [[ ! -s "${MODSECURITY_INCLUDE}" ]]; then
-
-    die "ModSecurity include kosong:
-
-    ${MODSECURITY_INCLUDE}"
-
-fi
-
-
-log_ok "ModSecurity include tersedia dan tidak kosong."
-
-
-echo
-echo "Include content:"
-echo
-
-cat "${MODSECURITY_INCLUDE}"
-
-
-# =============================================================================
-# Verify Effective Nginx Configuration
-# =============================================================================
-
-log_section "Effective Nginx Configuration Check"
-
-
-NGINX_DUMP=""
-
-if ! NGINX_DUMP="$(nginx -T 2>&1)"; then
-
-    log_error "Gagal membaca effective Nginx configuration."
-
-    echo
-    echo "${NGINX_DUMP}"
-    echo
-
-    log_warn "Melakukan rollback nginx.conf..."
-
-    if [[ -f "${CURRENT_NGINX_BACKUP_DIR}/nginx.conf" ]]; then
-
-        cp -a \
-            "${CURRENT_NGINX_BACKUP_DIR}/nginx.conf" \
-            "${NGINX_MAIN_CONF}"
-
-        log_ok "nginx.conf berhasil dipulihkan."
-
-    fi
-
-    exit 1
-
-fi
-
-
-if echo "${NGINX_DUMP}" | grep -Eq \
-    '^[[:space:]]*modsecurity[[:space:]]+on;'; then
-
-    log_ok "ModSecurity aktif pada effective Nginx configuration."
-
-else
-
-    log_error "ModSecurity tidak aktif pada effective Nginx configuration."
-    exit 1
-
-fi
-
-
-if echo "${NGINX_DUMP}" | grep -Eq \
-    '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
-
-    log_ok "BREBES-WAF ModSecurity include aktif."
-
-else
-
-    log_error "BREBES-WAF ModSecurity include belum terdeteksi."
-    exit 1
-
-fi
-
-
-if echo "${NGINX_DUMP}" | grep -Eq \
-    '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)'; then
-
-    log_ok "log_format reverser aktif."
-
-else
-
-    log_error "log_format reverser belum terdeteksi."
-    exit 1
-
-fi
-
-
-if echo "${NGINX_DUMP}" | grep -Eq \
-    'load_module.*ngx_http_modsecurity_module'; then
-
-    log_ok "ModSecurity Nginx module loaded."
-
-else
-
-    log_error "ModSecurity Nginx module tidak terdeteksi pada effective configuration."
-    exit 1
-
-fi
-
-
-# =============================================================================
-# Final Nginx Configuration Test
-# =============================================================================
-
-log_section "Final Nginx Configuration Test"
-
-
-if nginx -t; then
-
-    log_ok "Nginx configuration valid."
-
-else
-
-    log_error "Nginx configuration tidak valid."
-
-    echo
-    echo "Rollback nginx.conf..."
-
-    if [[ -f "${CURRENT_NGINX_BACKUP_DIR}/nginx.conf" ]]; then
-
-        cp -a \
-            "${CURRENT_NGINX_BACKUP_DIR}/nginx.conf" \
-            "${NGINX_MAIN_CONF}"
-
-        log_ok "nginx.conf berhasil dipulihkan."
-
-    fi
-
-    exit 1
-
-fi
-
-
-# =============================================================================
-# Enable Nginx Service
-# =============================================================================
-
-log_section "Nginx Service"
-
-
-if systemctl is-enabled nginx >/dev/null 2>&1; then
-
-    log_ok "Nginx enabled."
-
-else
-
-    log_info "Mengaktifkan Nginx..."
-
-    systemctl enable nginx
-
-    log_ok "Nginx enabled."
-
-fi
-
-
-# =============================================================================
-# Start / Reload Nginx
-# =============================================================================
-
-if systemctl is-active nginx >/dev/null 2>&1; then
-
-    log_info "Nginx sedang running."
-
-    if systemctl reload nginx; then
-
-        log_ok "Nginx berhasil di-reload."
-
-    else
-
-        log_error "Nginx reload gagal."
-
-        systemctl status nginx \
-            --no-pager \
-            || true
-
+    mapfile -t CRS_FILES < <(
+        find "${CRS_RULES_DIR}" \
+            -type f \
+            -name '*.conf' \
+            -print0 |
+        sort -z |
+        xargs -0 -r -n1 printf '%s\n'
+    )
+
+    if [[ "${#CRS_FILES[@]}" -eq 0 ]]; then
+        log_error "CRS rules tidak ditemukan."
         exit 1
-
     fi
 
-else
+    local file
 
-    log_info "Nginx belum running."
+    for file in "${CRS_FILES[@]}"; do
+        printf 'Include "%s"\n' "${file}" \
+            >> "${CRS_GENERATED_LOAD}"
+    done
 
-    systemctl start nginx
+    # --------------------------------------------------------
+    # BREBES-WAF
+    # --------------------------------------------------------
 
+    : > "${BREBES_RULES_LOAD}"
 
-    if systemctl is-active nginx >/dev/null 2>&1; then
+    cat >> "${BREBES_RULES_LOAD}" <<'EOF'
+# ============================================================
+# BREBES-WAF - Custom Rules
+# Generated automatically by deploy-first-time.sh
+# ============================================================
 
-        log_ok "Nginx berhasil dijalankan."
+EOF
 
-    else
+    mapfile -t BREBES_FILES < <(
+        find "${RULES_DIR}" \
+            -type f \
+            -name '*.conf' \
+            -print0 |
+        sort -z |
+        xargs -0 -r -n1 printf '%s\n'
+    )
 
-        log_error "Nginx gagal dijalankan."
-
-        systemctl status nginx \
-            --no-pager \
-            || true
-
+    if [[ "${#BREBES_FILES[@]}" -eq 0 ]]; then
+        log_error "BREBES-WAF rules tidak ditemukan."
         exit 1
-
     fi
 
-fi
+    for file in "${BREBES_FILES[@]}"; do
+        printf 'Include "%s"\n' "${file}" \
+            >> "${BREBES_RULES_LOAD}"
+    done
 
+    log_ok "Generated CRS load:"
+    echo "  ${CRS_GENERATED_LOAD}"
 
-# =============================================================================
-# Final Service Check
-# =============================================================================
+    log_ok "Generated BREBES-WAF rule load:"
+    echo "  ${BREBES_RULES_LOAD}"
 
-log_section "Final Service Check"
+    log_ok "CRS rules     : ${#CRS_FILES[@]}"
+    log_ok "BREBES-WAF     : ${#BREBES_FILES[@]}"
+}
 
+# ============================================================
+# FINAL MODSECURITY INCLUDE
+# ============================================================
 
-if systemctl is-active nginx >/dev/null 2>&1; then
+create_final_modsecurity_include() {
+    CURRENT_STEP="final ModSecurity include"
 
-    log_ok "Nginx: RUNNING"
+    cat > "${MODSEC_INCLUDE}" <<EOF
+# ============================================================
+# BREBES-WAF ModSecurity Master Include
+# Generated: ${TIMESTAMP}
+# Version  : ${SCRIPT_VERSION}
+# ============================================================
 
-else
+Include "${MODSEC_CONFIG}"
 
-    log_error "Nginx: NOT RUNNING"
+Include "${CRS_GENERATED_LOAD}"
 
-    exit 1
+Include "${BREBES_RULES_LOAD}"
+EOF
 
-fi
+    log_ok "Created ${MODSEC_INCLUDE}"
+}
 
+# ============================================================
+# ENSURE NGINX MODSECURITY DIRECTIVES
+# ============================================================
 
-# =============================================================================
-# Final BREBES-WAF Verification
-# =============================================================================
+ensure_nginx_modsecurity() {
+    CURRENT_STEP="Nginx ModSecurity directives"
 
-log_section "BREBES-WAF Final Verification"
+    if [[ ! -f "${NGINX_MAIN_CONFIG}" ]]; then
+        log_error "Nginx main config tidak ditemukan."
+        exit 1
+    fi
 
+    python3 - "${NGINX_MAIN_CONFIG}" "${MODSEC_INCLUDE}" <<'PY'
+import sys
+from pathlib import Path
 
-if [[ -f "${MODSECURITY_CONF}" ]]; then
+config_path = Path(sys.argv[1])
+include_path = sys.argv[2]
 
-    log_ok "ModSecurity configuration:"
-    echo "    ${MODSECURITY_CONF}"
+text = config_path.read_text()
+lines = text.splitlines()
 
-else
+# ------------------------------------------------------------
+# Remove existing global ModSecurity directives.
+# ------------------------------------------------------------
 
-    log_error "ModSecurity configuration tidak ditemukan."
+new_lines = []
 
-fi
+for line in lines:
+    stripped = line.strip()
 
+    if stripped.startswith("modsecurity on;"):
+        continue
 
-if [[ -f "${CRS_LOAD_FILE}" ]]; then
+    if stripped.startswith("modsecurity_rules_file "):
+        continue
 
-    log_ok "OWASP CRS configuration:"
-    echo "    ${CRS_LOAD_FILE}"
+    new_lines.append(line)
 
-else
+lines = new_lines
 
-    log_error "OWASP CRS configuration tidak ditemukan."
+# ------------------------------------------------------------
+# Find http block.
+# ------------------------------------------------------------
 
-fi
+http_start = None
+http_end = None
+brace = 0
+inside_http = False
 
+for i, line in enumerate(lines):
+    stripped = line.strip()
 
-if [[ -f "${MODSECURITY_INCLUDE}" ]]; then
+    if not inside_http and stripped.startswith("http") and "{" in stripped:
+        inside_http = True
+        http_start = i
+        brace = stripped.count("{") - stripped.count("}")
+        continue
 
-    log_ok "BREBES-WAF include:"
-    echo "    ${MODSECURITY_INCLUDE}"
+    if inside_http:
+        brace += line.count("{") - line.count("}")
 
-else
+        if brace == 0:
+            http_end = i
+            break
 
-    log_error "BREBES-WAF include tidak ditemukan."
+if http_start is None or http_end is None:
+    raise SystemExit("Tidak menemukan http {} pada nginx.conf")
 
-fi
+# ------------------------------------------------------------
+# Insert directives immediately before closing http block.
+# ------------------------------------------------------------
 
+directives = [
+    "",
+    "        # ====================================================",
+    "        # BREBES-WAF ModSecurity",
+    "        # ====================================================",
+    "        modsecurity on;",
+    f"        modsecurity_rules_file {include_path};",
+]
 
-RULE_COUNT=$(find "${RULES_DIR}" \
-    -type f \
-    -name '*.conf' \
-    | wc -l)
+lines[http_end:http_end] = directives
+
+config_path.write_text("\n".join(lines) + "\n")
+PY
+
+    log_ok "Nginx ModSecurity directives configured"
+}
 
+# ============================================================
+# ENSURE REVERSER LOG FORMAT
+# ============================================================
 
-echo
-echo "BREBES-WAF Rules:"
-echo "    ${RULE_COUNT} rule file(s)"
+ensure_reverser_log_format() {
+    CURRENT_STEP="Nginx reverser log format"
 
+    python3 - "${NGINX_MAIN_CONFIG}" <<'PY'
+import sys
+from pathlib import Path
 
-# =============================================================================
-# Final Summary
-# =============================================================================
+config_path = Path(sys.argv[1])
 
-log_section "BREBES-WAF Installation Summary"
+text = config_path.read_text()
+lines = text.splitlines()
 
+# ------------------------------------------------------------
+# Remove existing reverser log_format blocks.
+# ------------------------------------------------------------
 
-echo
+new_lines = []
+i = 0
 
-echo "Installation:"
-echo "    Status        : SUCCESS"
-echo "    Version       : 1.2.0"
-echo "    Repository    : ${BREBES_WAF_HOME}"
+while i < len(lines):
+    line = lines[i]
 
-echo
+    if line.strip().startswith("log_format reverser "):
+        i += 1
 
-echo "Operating System:"
-echo "    ${PRETTY_NAME}"
+        while i < len(lines):
+            if ";" in lines[i]:
+                i += 1
+                break
 
-echo
+            i += 1
 
-echo "Ubuntu Repository:"
-echo "    Main         : ${UBUNTU_MAIN_REPOSITORY}"
-echo "    Security     : ${UBUNTU_SECURITY_REPOSITORY}"
+        continue
 
-echo
+    new_lines.append(line)
+    i += 1
 
-echo "Ubuntu Codename:"
-echo "    ${UBUNTU_CODENAME}"
+lines = new_lines
 
-echo
+# ------------------------------------------------------------
+# Find http block.
+# ------------------------------------------------------------
 
-echo "Components:"
+http_start = None
+http_end = None
+brace = 0
+inside_http = False
 
-if command_exists nginx; then
-    echo "    [OK] Nginx"
-else
-    echo "    [FAIL] Nginx"
-fi
+for i, line in enumerate(lines):
+    stripped = line.strip()
 
+    if not inside_http and stripped.startswith("http") and "{" in stripped:
+        inside_http = True
+        http_start = i
+        brace = stripped.count("{") - stripped.count("}")
+        continue
+
+    if inside_http:
+        brace += line.count("{") - line.count("}")
+
+        if brace == 0:
+            http_end = i
+            break
+
+if http_start is None or http_end is None:
+    raise SystemExit("Tidak menemukan http {}")
+
+# ------------------------------------------------------------
+# Standard BREBES-WAF reverser format.
+# ------------------------------------------------------------
+
+reverser = [
+    "",
+    "        # ====================================================",
+    "        # BREBES-WAF Reverse Proxy Access Log",
+    "        # ====================================================",
+    "        log_format reverser",
+    "          '$remote_addr '",
+    "          '[$time_local] '",
+    "          '\"$request\" '",
+    "          '$status '",
+    "          '$body_bytes_sent '",
+    "          '\"$http_referer\" '",
+    "          '\"$http_user_agent\" '",
+    "          'host=\"$host\" '",
+    "          'xff=\"$http_x_forwarded_for\" '",
+    "          'rt=$request_time '",
+    "          'urt=$upstream_response_time '",
+    "          'upstream=\"$upstream_addr\"';",
+    "",
+]
+
+lines[http_start + 1:http_start + 1] = reverser
+
+config_path.write_text("\n".join(lines) + "\n")
+PY
+
+    log_ok "Nginx reverser log format configured"
+}
+
+# ============================================================
+# CHECK MODSECURITY AUDIT LOG FORMAT
+# ============================================================
+
+check_modsecurity_log_format() {
+    CURRENT_STEP="ModSecurity audit log format validation"
+
+    log_step "CHECK MODSECURITY AUDIT LOG FORMAT"
+
+    local errors=0
+
+    # --------------------------------------------------------
+    # SecAuditEngine
+    # --------------------------------------------------------
+
+    if grep -Eq \
+        '^[[:space:]]*SecAuditEngine[[:space:]]+RelevantOnly([[:space:]]|$)' \
+        "${MODSEC_CONFIG}"; then
+
+        log_ok "SecAuditEngine = RelevantOnly"
+    else
+        log_error "SecAuditEngine bukan RelevantOnly"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # SecAuditLogRelevantStatus
+    # --------------------------------------------------------
+
+    if grep -Eq \
+        '^[[:space:]]*SecAuditLogRelevantStatus[[:space:]]+' \
+        "${MODSEC_CONFIG}"; then
+
+        log_ok "SecAuditLogRelevantStatus configured"
+    else
+        log_error "SecAuditLogRelevantStatus tidak ditemukan"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # SecAuditLogParts
+    # --------------------------------------------------------
+
+    local audit_parts
+
+    audit_parts="$(
+        awk '
+        /^[[:space:]]*SecAuditLogParts[[:space:]]+/ {
+            print $2
+        }
+        ' "${MODSEC_CONFIG}" |
+        tail -n 1
+    )"
+
+    if [[ "${audit_parts}" == "ABIJDEFHZ" ]]; then
+        log_ok "SecAuditLogParts = ${audit_parts}"
+    else
+        log_error "SecAuditLogParts tidak sesuai."
+        echo "  Expected : ABIJDEFHZ"
+        echo "  Current  : ${audit_parts:-NOT FOUND}"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # Required audit sections
+    # --------------------------------------------------------
+
+    local required_part
+
+    for required_part in A B I J D E F H Z; do
+
+        if [[ "${audit_parts}" == *"${required_part}"* ]]; then
+            log_ok "Audit section ${required_part} enabled"
+        else
+            log_error "Audit section ${required_part} tidak tersedia"
+            errors=$((errors + 1))
+        fi
+
+    done
+
+    # --------------------------------------------------------
+    # Audit type
+    # --------------------------------------------------------
+
+    if grep -Eq \
+        '^[[:space:]]*SecAuditLogType[[:space:]]+Serial([[:space:]]|$)' \
+        "${MODSEC_CONFIG}"; then
+
+        log_ok "SecAuditLogType = Serial"
+    else
+        log_error "SecAuditLogType bukan Serial"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # Audit log
+    # --------------------------------------------------------
+
+    local audit_log
+
+    audit_log="$(
+        awk '
+        /^[[:space:]]*SecAuditLog[[:space:]]+/ {
+            print $2
+        }
+        ' "${MODSEC_CONFIG}" |
+        tail -n 1
+    )"
+
+    if [[ "${audit_log}" == "${MODSEC_AUDIT_LOG}" ]]; then
+        log_ok "SecAuditLog = ${MODSEC_AUDIT_LOG}"
+    else
+        log_error "SecAuditLog tidak sesuai."
+        echo "  Expected : ${MODSEC_AUDIT_LOG}"
+        echo "  Current  : ${audit_log:-NOT FOUND}"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # Response body policy
+    # --------------------------------------------------------
+
+    local response_body_access
+
+    response_body_access="$(
+        awk '
+        /^[[:space:]]*SecResponseBodyAccess[[:space:]]+/ {
+            print $2
+        }
+        ' "${MODSEC_CONFIG}" |
+        tail -n 1
+    )"
+
+    if [[ "${response_body_access}" == "Off" ]]; then
+        log_ok "SecResponseBodyAccess = Off"
+    else
+        log_error "SecResponseBodyAccess harus Off."
+        echo "  Current : ${response_body_access:-NOT FOUND}"
+        errors=$((errors + 1))
+    fi
+
+    # --------------------------------------------------------
+    # Result
+    # --------------------------------------------------------
+
+    if [[ "${errors}" -gt 0 ]]; then
+        log_error "ModSecurity audit log validation FAILED."
+        return 1
+    fi
+
+    log_ok "ModSecurity audit log validation PASSED"
+}
+
+# ============================================================
+# CHECK REVERSER LOG FORMAT
+# ============================================================
+
+check_reverser_log_format() {
+    CURRENT_STEP="Nginx reverser log format validation"
+
+    log_step "CHECK NGINX REVERSER LOG FORMAT"
+
+    local errors=0
+
+    if ! grep -qE 'log_format reverser' \
+        "${NGINX_MAIN_CONFIG}"; then
+
+        log_error "log_format reverser tidak ditemukan."
+        return 1
+    fi
+
+    log_ok "log_format reverser ditemukan"
+
+    local required_fields=(
+        '\$remote_addr'
+        '\$time_local'
+        '\$request'
+        '\$status'
+        '\$body_bytes_sent'
+        '\$http_referer'
+        '\$http_user_agent'
+        'host="\$host"'
+        'xff="\$http_x_forwarded_for"'
+        'rt=\$request_time'
+        'urt=\$upstream_response_time'
+        'upstream="\$upstream_addr"'
+    )
 
-if [[ -n "${MODSECURITY_MODULE}" ]]; then
-    echo "    [OK] ModSecurity Nginx Module"
-else
-    echo "    [FAIL] ModSecurity Nginx Module"
-fi
+    local field
 
+    for field in "${required_fields[@]}"; do
 
-if [[ "${MODSECURITY_FOUND}" == "true" ]]; then
-    echo "    [OK] ModSecurity v3 Library"
-else
-    echo "    [FAIL] ModSecurity v3 Library"
-fi
+        if grep -qF "${field}" \
+            "${NGINX_MAIN_CONFIG}"; then
 
+            log_ok "reverser field OK: ${field}"
+        else
+            log_error "reverser field MISSING: ${field}"
+            errors=$((errors + 1))
+        fi
 
-if [[ "${CRS_FOUND}" == "true" ]]; then
-    echo "    [OK] OWASP CRS"
-else
-    echo "    [FAIL] OWASP CRS"
-fi
+    done
 
+    if [[ "${errors}" -gt 0 ]]; then
+        log_error "Nginx reverser log validation FAILED."
+        return 1
+    fi
 
-if [[ -f "${MODSECURITY_CONF}" ]]; then
-    echo "    [OK] ModSecurity Configuration"
-else
-    echo "    [FAIL] ModSecurity Configuration"
-fi
+    log_ok "Nginx reverser log validation PASSED"
+}
 
+# ============================================================
+# CHECK LOG DIRECTORY
+# ============================================================
 
-if [[ -f "${MODSECURITY_INCLUDE}" ]]; then
-    echo "    [OK] BREBES-WAF Include"
-else
-    echo "    [FAIL] BREBES-WAF Include"
-fi
+check_log_directory() {
+    CURRENT_STEP="log directory validation"
 
+    log_step "CHECK LOG DIRECTORY"
 
-if [[ -d "${RULES_DIR}" ]]; then
-    echo "    [OK] BREBES-WAF Rules"
-else
-    echo "    [FAIL] BREBES-WAF Rules"
-fi
+    if [[ ! -d "${MODSEC_LOG_DIR}" ]]; then
+        log_error "ModSecurity log directory tidak ada."
+        return 1
+    fi
 
+    log_ok "Log directory exists:"
+    echo "  ${MODSEC_LOG_DIR}"
 
-if command_exists git; then
-    echo "    [OK] Git"
-else
-    echo "    [FAIL] Git"
-fi
+    if [[ ! -f "${MODSEC_AUDIT_LOG}" ]]; then
+        touch "${MODSEC_AUDIT_LOG}"
+    fi
 
+    if [[ ! -f "${MODSEC_DEBUG_LOG}" ]]; then
+        touch "${MODSEC_DEBUG_LOG}"
+    fi
 
-if command_exists curl; then
-    echo "    [OK] Curl"
-else
-    echo "    [FAIL] Curl"
-fi
+    log_ok "Audit log exists:"
+    echo "  ${MODSEC_AUDIT_LOG}"
 
+    log_ok "Debug log exists:"
+    echo "  ${MODSEC_DEBUG_LOG}"
+}
 
-if package_installed "ca-certificates"; then
-    echo "    [OK] CA Certificates"
-else
-    echo "    [FAIL] CA Certificates"
-fi
+# ============================================================
+# FIX LOG PERMISSIONS
+# ============================================================
 
+fix_log_permissions() {
+    CURRENT_STEP="ModSecurity log permissions"
 
-echo
+    mkdir -p "${MODSEC_LOG_DIR}"
 
-echo "Nginx Security Configuration:"
-echo "    [OK] ModSecurity: ON"
-echo "    [OK] BREBES-WAF include"
-echo "    [OK] log_format reverser"
+    touch "${MODSEC_AUDIT_LOG}"
+    touch "${MODSEC_DEBUG_LOG}"
 
-echo
+    chown www-data:adm "${MODSEC_AUDIT_LOG}" 2>/dev/null || true
+    chown www-data:adm "${MODSEC_DEBUG_LOG}" 2>/dev/null || true
 
-echo "Configuration Files:"
-echo "    ModSecurity : ${MODSECURITY_CONF}"
-echo "    CRS         : ${CRS_LOAD_FILE}"
-echo "    WAF Include : ${MODSECURITY_INCLUDE}"
+    chmod 0640 "${MODSEC_AUDIT_LOG}"
+    chmod 0640 "${MODSEC_DEBUG_LOG}"
 
-echo
+    log_ok "ModSecurity log permissions configured"
+}
 
-echo "Backup:"
-echo "    APT         : ${CURRENT_BACKUP_DIR}"
-echo "    Nginx       : ${CURRENT_NGINX_BACKUP_DIR}"
+# ============================================================
+# NGINX CONFIG DUMP
+# ============================================================
 
-echo
+test_nginx_dump() {
+    CURRENT_STEP="nginx -T"
 
-echo "============================================================"
-echo " BREBES-WAF First-Time Installation Completed"
-echo "============================================================"
+    log_step "NGINX CONFIGURATION DUMP"
 
-echo
+    local dump_file="/tmp/brebes-waf-nginx-test-${TIMESTAMP}.txt"
 
-log_ok "BREBES-WAF berhasil diinstall dan dikonfigurasi."
+    nginx -T >"${dump_file}" 2>&1
 
-echo
+    log_ok "nginx -T PASSED"
 
-echo "Next step:"
-echo
-echo "    Gunakan scripts/deploy.sh untuk deployment/update rules berikutnya."
-echo
+    echo
+    echo "Configuration dump:"
+    echo "  ${dump_file}"
+}
+
+# ============================================================
+# NGINX CONFIG TEST
+# ============================================================
+
+test_nginx() {
+    CURRENT_STEP="nginx -t"
+
+    log_step "NGINX CONFIGURATION TEST"
+
+    nginx -t
+
+    log_ok "nginx -t PASSED"
+}
+
+# ============================================================
+# VERIFY MODSECURITY RUNTIME
+# ============================================================
+
+verify_modsecurity_loaded() {
+    CURRENT_STEP="ModSecurity runtime verification"
+
+    log_step "VERIFY MODSECURITY RUNTIME"
+
+    local output
+
+    output="$(nginx -T 2>&1)"
+
+    if grep -q "modsecurity on;" <<<"${output}"; then
+        log_ok "modsecurity on; detected"
+    else
+        log_error "modsecurity on; tidak ditemukan."
+        return 1
+    fi
+
+    if grep -q \
+        "modsecurity_rules_file ${MODSEC_INCLUDE};" \
+        <<<"${output}"; then
+
+        log_ok "BREBES-WAF ModSecurity include detected"
+    else
+        log_error "BREBES-WAF ModSecurity include tidak ditemukan."
+        return 1
+    fi
+
+    if grep -q \
+        "log_format reverser" \
+        <<<"${output}"; then
+
+        log_ok "reverser log format detected"
+    else
+        log_error "reverser log format tidak ditemukan."
+        return 1
+    fi
+}
+
+# ============================================================
+# EXISTING AUDIT LOG CHECK
+# ============================================================
+
+check_existing_audit_records() {
+    CURRENT_STEP="existing ModSecurity audit record validation"
+
+    log_step "CHECK EXISTING MODSECURITY AUDIT RECORD"
+
+    if [[ ! -s "${MODSEC_AUDIT_LOG}" ]]; then
+        log_warn "Audit log masih kosong."
+        log_warn "Ini normal pada first deployment."
+        return 0
+    fi
+
+    log_info "Audit log sudah memiliki data."
+
+    local sections
+
+    sections="$(
+        grep -oE '^---[^-]+---[A-Z]--$' \
+            "${MODSEC_AUDIT_LOG}" 2>/dev/null |
+        sed -E 's/^.*---([A-Z])--$/\1/' |
+        sort -u |
+        tr '\n' ' '
+    )"
+
+    if [[ -n "${sections}" ]]; then
+        log_ok "Detected audit sections:"
+        echo "  ${sections}"
+    else
+        log_warn "Belum menemukan section audit serial."
+        log_warn "Kemungkinan belum ada transaction yang diaudit."
+    fi
+
+    local part
+
+    for part in A B H Z; do
+
+        if grep -qE "^---[^-]+---${part}--$" \
+            "${MODSEC_AUDIT_LOG}" 2>/dev/null; then
+
+            log_ok "Audit section ${part} detected"
+        else
+            log_warn "Audit section ${part} belum ditemukan"
+        fi
+
+    done
+}
+
+# ============================================================
+# NGINX SERVICE CHECK
+# ============================================================
+
+check_nginx_service() {
+    CURRENT_STEP="Nginx service validation"
+
+    if systemctl is-active --quiet nginx; then
+        log_ok "Nginx service is active"
+    else
+        log_error "Nginx service is NOT active."
+        systemctl status nginx --no-pager || true
+        return 1
+    fi
+}
+
+# ============================================================
+# RELOAD NGINX
+# ============================================================
+
+reload_nginx() {
+    CURRENT_STEP="Nginx reload"
+
+    log_step "RELOAD NGINX"
+
+    systemctl reload nginx
+
+    log_ok "Nginx reloaded"
+}
+
+# ============================================================
+# FINAL SUMMARY
+# ============================================================
+
+final_summary() {
+    CURRENT_STEP="final summary"
+
+    echo
+    echo -e "${GREEN}============================================================${NC}"
+    echo -e "${GREEN} BREBES-WAF FIRST TIME DEPLOYMENT COMPLETED${NC}"
+    echo -e "${GREEN}============================================================${NC}"
+    echo
+    echo "Version              : ${SCRIPT_VERSION}"
+    echo "Release Date         : ${RELEASE_DATE}"
+    echo
+    echo "Project              : ${PROJECT_DIR}"
+    echo
+    echo "ModSecurity config   : ${MODSEC_CONFIG}"
+    echo "ModSecurity include  : ${MODSEC_INCLUDE}"
+    echo "CRS load             : ${CRS_GENERATED_LOAD}"
+    echo "BREBES-WAF rules     : ${BREBES_RULES_LOAD}"
+    echo
+    echo "Audit log            : ${MODSEC_AUDIT_LOG}"
+    echo "Debug log            : ${MODSEC_DEBUG_LOG}"
+    echo
+    echo "Response inspection  : OFF"
+    echo "Audit log type       : Serial"
+    echo "Audit log parts      : ABIJDEFHZ"
+    echo "Audit engine         : RelevantOnly"
+    echo
+    echo "Reverser log format  : reverser"
+    echo
+    echo "Backup               : ${BACKUP_DIR}"
+    echo
+    echo -e "${GREEN}============================================================${NC}"
+    echo " BREBES-WAF is ready."
+    echo -e "${GREEN}============================================================${NC}"
+}
+
+# ============================================================
+# MAIN
+# ============================================================
+
+main() {
+
+    require_root
+
+    show_system_info
+
+    check_project
+
+    log_step "PREPARE SYSTEM"
+
+    apt_update
+    install_basic_dependencies
+    install_modsecurity
+
+    log_step "PREPARE NGINX MODSECURITY"
+
+    enable_modsecurity_module
+    prepare_log_directory
+
+    log_step "BACKUP"
+
+    backup_existing_configuration
+
+    log_step "CONFIGURE MODSECURITY"
+
+    create_modsecurity_config
+
+    log_step "CONFIGURE OWASP CRS"
+
+    find_crs
+
+    log_step "GENERATE RULE LOAD"
+
+    generate_rule_load_files
+    create_final_modsecurity_include
+
+    log_step "CONFIGURE NGINX"
+
+    ensure_nginx_modsecurity
+    ensure_reverser_log_format
+
+    log_step "VALIDATE LOGGING"
+
+    fix_log_permissions
+    check_modsecurity_log_format
+    check_reverser_log_format
+    check_log_directory
+    check_existing_audit_records
+
+    log_step "VALIDATE NGINX"
+
+    test_nginx_dump
+    test_nginx
+    verify_modsecurity_loaded
+
+    log_step "ACTIVATE"
+
+    reload_nginx
+    check_nginx_service
+
+    final_summary
+}
+
+main "$@"
