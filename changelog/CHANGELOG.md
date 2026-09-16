@@ -2,7 +2,8 @@
 
 Semua perubahan penting pada project **BREBES-WAF** dicatat dalam file ini.
 
-Format changelog mengikuti prinsip **Keep a Changelog** dan **Semantic Versioning**.
+Format changelog mengikuti prinsip **Keep a Changelog** dan
+**Semantic Versioning**.
 
 ---
 
@@ -37,6 +38,196 @@ Belum ada.
 ### Documentation
 
 Belum ada.
+
+---
+
+## [1.2.0] - 2026-09-16
+
+Release ketiga BREBES-WAF.
+
+Release ini menyempurnakan proses **first-time deployment**, validasi konfigurasi Nginx dan ModSecurity, standardisasi logging, serta response body inspection untuk meningkatkan visibility terhadap security event.
+
+Release **1.2.0 telah melalui pengujian dan validasi sebelum digunakan**.
+
+### Added
+
+#### 1. Nginx Reverser Access Log Configuration
+
+Menambahkan konfigurasi otomatis global Nginx access log menggunakan format:
+
+    access_log /var/log/nginx/access.log reverser;
+
+Konfigurasi digunakan untuk:
+
+- Standardisasi access logging.
+- Mendukung korelasi Nginx Access Log dengan ModSecurity Audit Log.
+- Mendukung detection analysis.
+- Mendukung incident investigation.
+
+---
+
+#### 2. ModSecurity Response Body Inspection
+
+Mengaktifkan pemeriksaan response body:
+
+    SecResponseBodyAccess On
+
+Response body inspection dibatasi pada MIME type:
+
+    text/plain
+    text/html
+    text/xml
+    application/json
+
+Batas response body:
+
+    SecResponseBodyLimit 1048576
+
+Action:
+
+    SecResponseBodyLimitAction ProcessPartial
+
+Konfigurasi ini memberikan kemampuan pemeriksaan response aplikasi dengan tetap membatasi penggunaan resource.
+
+---
+
+### Changed
+
+#### 1. First-Time Deployment Script
+
+Menyempurnakan:
+
+    scripts/deploy-first-time.sh
+
+Perubahan mencakup:
+
+- Memastikan `log_format reverser` tersedia.
+- Memastikan global `access_log` menggunakan format `reverser`.
+- Memastikan ModSecurity aktif.
+- Memastikan `modsecurity_rules_file` tersedia.
+- Meningkatkan validasi generated ModSecurity include.
+- Meningkatkan validasi jumlah BREBES-WAF rule yang dimuat.
+- Mempertahankan backup konfigurasi sebelum perubahan.
+- Mempertahankan validasi `nginx -t`.
+- Memastikan effective Nginx configuration dapat diverifikasi setelah deployment.
+
+---
+
+#### 2. ModSecurity Audit Logging
+
+Menstandarkan konfigurasi audit logging:
+
+    SecAuditEngine RelevantOnly
+    SecAuditLogRelevantStatus "^(?:5|4(?!04))"
+    SecAuditLogParts ABCDEFHIJZ
+    SecAuditLogType Concurrent
+    SecAuditLogStorageDir /var/log/nginx/modsecurity/
+
+Konfigurasi digunakan untuk mendukung pencatatan security event yang relevan.
+
+---
+
+### Deprecated
+
+Belum ada.
+
+---
+
+### Removed
+
+Belum ada.
+
+---
+
+### Fixed
+
+#### 1. ModSecurity Include Validation
+
+Memperbaiki validasi generated file:
+
+    /etc/nginx/modsecurity_includes.conf
+
+Validasi sekarang menangani directive ModSecurity `Include` tanpa mengharuskan penggunaan semicolon dan tidak bergantung pada penggunaan huruf besar atau kecil.
+
+---
+
+#### 2. BREBES-WAF Rule Include Count
+
+Memperbaiki pemeriksaan jumlah custom rule BREBES-WAF pada:
+
+    /etc/nginx/modsecurity_includes.conf
+
+Validasi dapat mengenali seluruh directive:
+
+    Include /opt/Brebes-WAF/rules/.../*.conf
+
+sehingga rule yang telah berhasil dimuat tidak menyebabkan false failure pada proses deployment.
+
+---
+
+#### 3. Global Nginx Access Log Validation
+
+Menambahkan validasi terhadap:
+
+    access_log /var/log/nginx/access.log reverser;
+
+Validasi dilakukan terhadap konfigurasi Nginx dan effective configuration.
+
+---
+
+### Security
+
+#### 1. Response Body Security Inspection
+
+Response body inspection digunakan untuk mendukung pemeriksaan response aplikasi oleh ModSecurity dan OWASP CRS.
+
+Kemampuan ini dapat membantu mendeteksi:
+
+- Information leakage.
+- Database error disclosure.
+- Outbound anomaly.
+- Informasi sensitif yang muncul pada response aplikasi.
+
+Pemeriksaan dibatasi berdasarkan MIME type dan ukuran response untuk mempertimbangkan penggunaan resource.
+
+---
+
+#### 2. Security Logging Standardization
+
+Standardisasi logging mendukung korelasi:
+
+    Nginx Access Log
+          +
+    ModSecurity Audit Log
+
+untuk:
+
+- Detection analysis.
+- False positive analysis.
+- Incident investigation.
+- Security monitoring.
+- Incident response.
+
+---
+
+### Documentation
+
+#### 1. First-Time Deployment Documentation
+
+Dokumentasi first-time deployment diperbarui mengikuti implementasi terbaru pada:
+
+    scripts/deploy-first-time.sh
+
+Baseline:
+
+    CSIRT Lab Reverser
+
+Konfigurasi utama yang divalidasi:
+
+    log_format reverser
+    access_log /var/log/nginx/access.log reverser;
+    modsecurity on;
+    modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;
 
 ---
 
@@ -1387,6 +1578,7 @@ Struktur repository BREBES-WAF:
 | Version | Release Date | Status | Description |
 |---|---|---|---|
 | `Unreleased` | - | Development | Perubahan yang sedang dikembangkan |
+| `1.2.0` | `2026-09-16` | **Stable** | First-time deployment enhancement, configuration validation, response body inspection, dan logging standardization |
 | `1.1.0` | `2026-09-11` | **Stable** | Dependency automation, Ubuntu repository configuration, ModSecurity package detection, dan deployment preparation |
 | `1.0.0` | `2026-09-10` | Stable | Initial BREBES-WAF release |
 
@@ -1430,6 +1622,30 @@ Struktur repository BREBES-WAF:
 ---
 
 ## Release Notes
+
+### BREBES-WAF 1.2.0
+
+**Release Date:** 2026-09-16
+
+BREBES-WAF `1.2.0` merupakan release yang menyempurnakan proses first-time deployment dan validasi konfigurasi BREBES-WAF.
+
+Release ini mencakup:
+
+- First-time deployment enhancement.
+- Nginx `reverser` access log.
+- Global access log validation.
+- Effective Nginx configuration validation.
+- ModSecurity configuration validation.
+- ModSecurity include validation.
+- BREBES-WAF rule include validation.
+- Response body inspection.
+- ModSecurity audit logging standardization.
+- Security logging standardization.
+- Deployment verification.
+
+Release `1.2.0` telah melalui pengujian dan validasi sebelum digunakan dan menjadi baseline untuk pengembangan BREBES-WAF berikutnya.
+
+---
 
 ### BREBES-WAF 1.1.0
 
