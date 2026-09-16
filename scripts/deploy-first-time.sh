@@ -1323,8 +1323,8 @@ else
 fi
 
 BREBES_INCLUDE_COUNT="$(
-    grep -Ec \
-        '^include /opt/Brebes-WAF/rules/.*\.conf;$' \
+    grep -Eic \
+        '^[[:space:]]*[Ii]nclude[[:space:]]+/opt/Brebes-WAF/rules/.*\.conf[[:space:]]*$' \
         "${MODSECURITY_INCLUDE}" \
         || true
 )"
