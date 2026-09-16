@@ -18,9 +18,9 @@
 #   Ubuntu 22.04
 #
 # IMPORTANT:
-#   - ModSecurity configuration follows the monitoredreverser baseline.
+#   - ModSecurity configuration follows the CSIRT Lab Reverser baseline.
 #   - SecResponseBodyAccess is ON with MIME and 1 MiB limits for performance.
-#   - Audit logging uses Concurrent format, matching monitoredreverser.
+#   - Audit logging uses Concurrent format, matching CSIRT Lab Reverser.
 #   - Existing configuration is backed up BEFORE modification.
 #   - Original configuration backup:
 #       /opt/Brebes-WAF/backup/orig/<YYYYMMDD-HHMMSS>/
@@ -68,7 +68,7 @@ CURRENT_BACKUP_DIR="${ORIGINAL_BACKUP_ROOT}/${BACKUP_TIMESTAMP}"
 MODSECURITY_AUDIT_DIR="/var/log/nginx/modsecurity"
 MODSECURITY_DEBUG_LOG="${MODSECURITY_AUDIT_DIR}/debug.log"
 
-# Match monitoredreverser Concurrent audit configuration
+# Match CSIRT Lab Reverser Concurrent audit configuration
 MODSECURITY_AUDIT_STORAGE_DIR="${MODSECURITY_AUDIT_DIR}"
 
 MODSECURITY_MODULE_PACKAGE="libnginx-mod-http-modsecurity"
@@ -81,7 +81,7 @@ NDK_MODULE_PATH="/usr/lib/nginx/modules/ndk_http_module.so"
 MODSECURITY_MODULE_CONFIG="/etc/nginx/modules-enabled/50-mod-http-modsecurity.conf"
 MODSECURITY_MODULE_AVAILABLE="/etc/nginx/modules-available/mod-http-modsecurity.conf"
 
-# Baseline values copied from monitoredreverser
+# Baseline values copied from CSIRT Lab Reverser
 REQUEST_BODY_LIMIT="134217728"
 REQUEST_BODY_NO_FILES_LIMIT="131072"
 JSON_DEPTH_LIMIT="512"
@@ -96,7 +96,7 @@ RESPONSE_BODY_MIME_TYPES="text/plain text/html text/xml application/json"
 RESPONSE_BODY_LIMIT="1048576"
 RESPONSE_BODY_LIMIT_ACTION="ProcessPartial"
 
-# monitoredreverser audit baseline
+# CSIRT Lab Reverser audit baseline
 AUDIT_ENGINE="RelevantOnly"
 AUDIT_RELEVANT_STATUS='^(?:5|4(?!04))'
 AUDIT_PARTS="ABCDEFHIJZ"
@@ -591,7 +591,7 @@ cat > "${MODSECURITY_CONF}" <<'EOF'
 # ModSecurity v3 Base Configuration
 #
 # Baseline:
-#   monitoredreverser
+#   CSIRT Lab Reverser
 #
 # Important:
 #   SecResponseBodyAccess is ON with MIME and 1 MiB limits for performance.
@@ -699,7 +699,7 @@ SecDebugLogLevel 0
 # -----------------------------------------------------------------------------
 # Audit log
 #
-# This follows monitoredreverser:
+# This follows CSIRT Lab Reverser:
 #   RelevantOnly
 #   4xx except 404 + 5xx
 #   Concurrent
@@ -797,7 +797,7 @@ for RULE_ID in 200000 200001 200002 200003 200004 200005 200007; do
     fi
 done
 
-log_ok "ModSecurity baseline sesuai monitoredreverser dengan response-body inspection ON dan tuning performa."
+log_ok "ModSecurity baseline sesuai CSIRT Lab Reverser dengan response-body inspection ON dan tuning performa."
 
 # =============================================================================
 # OWASP CRS
