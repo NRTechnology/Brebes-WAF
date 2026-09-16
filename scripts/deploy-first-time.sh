@@ -1037,6 +1037,49 @@ do
 done
 
 # =============================================================================
+# Nginx Global Access Log
+# =============================================================================
+
+log_section "Nginx Global Access Log Check"
+
+if grep -Eq \
+    '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;' \
+    "${NGINX_MAIN_CONF}"; then
+
+    log_ok "Global access_log menggunakan format reverser."
+
+else
+
+    if grep -Eq \
+        '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]*;' \
+        "${NGINX_MAIN_CONF}"; then
+
+        sed -i \
+            's#^[[:space:]]*access_log[[:space:]]*/var/log/nginx/access\.log[[:space:]]*;#        access_log /var/log/nginx/access.log reverser;#' \
+            "${NGINX_MAIN_CONF}"
+
+        log_ok "Global access_log diubah ke format reverser."
+
+    else
+
+        die "Global access_log /var/log/nginx/access.log tidak ditemukan di ${NGINX_MAIN_CONF}."
+
+    fi
+fi
+
+if grep -Eq \
+    '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;' \
+    "${NGINX_MAIN_CONF}"; then
+
+    log_ok "Global access_log reverser aktif."
+
+else
+
+    die "Global access_log reverser belum terdeteksi."
+
+fi
+
+# =============================================================================
 # Display Configuration
 # =============================================================================
 
@@ -1119,6 +1162,19 @@ if echo "${NGINX_DUMP}" |
 else
     rollback_nginx_conf
     die "log_format reverser belum terdeteksi."
+fi
+
+if echo "${NGINX_DUMP}" |
+    grep -Eq \
+        '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;'; then
+
+    log_ok "Global access_log reverser aktif pada effective configuration."
+
+else
+
+    rollback_nginx_conf
+    die "Global access_log reverser belum terdeteksi pada effective configuration."
+
 fi
 
 if echo "${NGINX_DUMP}" |
