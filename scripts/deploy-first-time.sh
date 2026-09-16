@@ -920,7 +920,7 @@ include ${CRS_LOAD_FILE}
 EOF
 
 for RULE_FILE in "${RULE_FILES[@]}"; do
-    printf 'include %s\n' "${RULE_FILE}" >> "${TEMP_INCLUDE}"
+    printf 'Include %s\n' "${RULE_FILE}" >> "${TEMP_INCLUDE}"
 done
 
 [[ -s "${TEMP_INCLUDE}" ]] ||
