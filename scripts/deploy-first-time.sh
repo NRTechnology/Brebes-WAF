@@ -1077,7 +1077,7 @@ log_section "ModSecurity Include Check"
 [[ -s "${MODSECURITY_INCLUDE}" ]] ||
     die "ModSecurity include kosong: ${MODSECURITY_INCLUDE}"
 
-INCLUDE_COUNT="$(grep -Ec '^[[:space:]]*include[[:space:]]+.+;' "${MODSECURITY_INCLUDE}" || true)"
+INCLUDE_COUNT="$(grep -Eic '^[[:space:]]*include[[:space:]]+[^[:space:]]+' "${MODSECURITY_INCLUDE}" || true)"
 
 [[ "${INCLUDE_COUNT}" -gt 0 ]] ||
     die "Tidak ada include directive di ${MODSECURITY_INCLUDE}"
