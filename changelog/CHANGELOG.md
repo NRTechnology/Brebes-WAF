@@ -1579,7 +1579,7 @@ Struktur repository BREBES-WAF:
 | `Unreleased` | - | Development | Perubahan yang sedang dikembangkan |
 | `1.2.0` | `2026-09-16` | **Stable** | First-time deployment enhancement, configuration validation, response body inspection, dan logging standardization |
 | `1.1.0` | `2026-09-11` | **Stable** | Dependency automation, Ubuntu repository configuration, ModSecurity package detection, dan deployment preparation |
-| `1.0.0` | `2026-09-10` | Stable | Initial BREBES-WAF release |
+| `1.0.0` | `2026-09-10` | **Stable** | Initial BREBES-WAF release |
 
 ---
 
