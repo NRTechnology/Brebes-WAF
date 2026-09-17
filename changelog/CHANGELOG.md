@@ -39,6 +39,203 @@ Belum ada.
 Belum ada.
 
 ---
+---
+
+## [1.3.0] - 2026-09-17
+
+Release keempat BREBES-WAF.
+
+Release ini menambahkan standardisasi konfigurasi reverse proxy Nginx melalui shared proxy snippet dan automation untuk membuat konfigurasi virtual host reverse proxy.
+
+Release **1.3.0 telah melalui pengujian dan validasi sebelum digunakan**.
+
+### Added
+
+#### 1. Nginx Proxy Common Snippet
+
+Menambahkan shared Nginx proxy configuration:
+
+    /etc/nginx/snippets/proxy-common.conf
+
+Snippet digunakan untuk menstandarkan konfigurasi reverse proxy Nginx.
+
+Konfigurasi mencakup:
+
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    proxy_set_header Accept-Encoding "";
+
+Tujuan:
+
+- Menstandarkan konfigurasi reverse proxy.
+- Menstandarkan forwarding header.
+- Mempertahankan informasi client IP melalui X-Real-IP dan X-Forwarded-For.
+- Mempertahankan informasi host dan protocol asli.
+- Menghindari response compression dari upstream melalui `Accept-Encoding`.
+- Mengurangi duplikasi konfigurasi pada setiap virtual host.
+
+---
+
+#### 2. Reverse Proxy Configuration Generator
+
+Menambahkan script:
+
+    scripts/create-reverse-proxy.sh
+
+Script digunakan untuk membuat konfigurasi Nginx reverse proxy secara otomatis.
+
+Parameter yang digunakan:
+
+    <domain>
+    <ssl_certificate>
+    <ssl_certificate_key>
+    <proxy_pass>
+
+Contoh:
+
+    ./scripts/create-reverse-proxy.sh \
+        inspektorat.brebeskab.go.id \
+        /var/ssl_cert/star.brebeskab.go.id.crt \
+        /var/ssl_cert/star.brebeskab.go.id.key \
+        http://15.0.2.6
+
+Script menghasilkan:
+
+    /etc/nginx/sites-available/<domain>.conf
+
+dan mengaktifkan konfigurasi melalui:
+
+    /etc/nginx/sites-enabled/<domain>.conf
+
+---
+
+#### 3. Standardized Reverse Proxy Logging
+
+Reverse proxy configuration generator secara otomatis menggunakan format logging:
+
+    access_log /var/log/nginx/<domain>.access.log reverser;
+    error_log /var/log/nginx/<domain>.error.log;
+
+Hal ini mempertahankan standardisasi logging BREBES-WAF yang diperkenalkan pada release sebelumnya.
+
+---
+
+### Changed
+
+#### 1. Reverse Proxy Configuration Standardization
+
+Konfigurasi reverse proxy Nginx dapat menggunakan:
+
+    /etc/nginx/snippets/proxy-common.conf
+
+sehingga konfigurasi header proxy tidak perlu ditulis ulang pada setiap virtual host.
+
+---
+
+#### 2. First-Time Deployment
+
+`deploy-first-time.sh` menyiapkan shared proxy configuration setelah Nginx dipastikan tersedia.
+
+Snippet:
+
+    /etc/nginx/snippets/proxy-common.conf
+
+tidak dibuat sebelum pemeriksaan Nginx selesai.
+
+Nginx harus terlebih dahulu dipastikan tersedia melalui:
+
+    command_exists nginx
+
+sebelum proses pembuatan proxy common snippet dilanjutkan.
+
+---
+
+### Deprecated
+
+Belum ada.
+
+---
+
+### Removed
+
+Belum ada.
+
+---
+
+### Fixed
+
+Belum ada.
+
+---
+
+### Security
+
+#### 1. Reverse Proxy Header Standardization
+
+Standardisasi proxy header membantu memastikan informasi request yang diteruskan ke backend tetap konsisten, termasuk:
+
+- Host.
+- Original host.
+- Original protocol.
+- Original port.
+- Client IP.
+- Forwarded client IP.
+
+Konfigurasi ini mendukung korelasi antara Nginx access log, ModSecurity audit log, dan application log.
+
+---
+
+### Documentation
+
+#### 1. Reverse Proxy Deployment Documentation
+
+Menambahkan dokumentasi penggunaan:
+
+    scripts/create-reverse-proxy.sh
+
+Dokumentasi mencakup:
+
+- Parameter domain.
+- SSL certificate.
+- SSL certificate key.
+- Backend `proxy_pass`.
+- Generated virtual host.
+- Access log.
+- Error log.
+- Nginx configuration validation.
+- Proses reload Nginx.
+
+---
+
+### Release Notes
+
+#### BREBES-WAF 1.3.0
+
+**Release Date:** 2026-09-17
+
+BREBES-WAF `1.3.0` menambahkan standardisasi dan automation konfigurasi reverse proxy Nginx.
+
+Release ini mencakup:
+
+- Nginx `proxy-common.conf`.
+- Standardisasi proxy header.
+- Standardisasi reverse proxy logging.
+- Reverse proxy configuration generator.
+- Automatic virtual host generation.
+- SSL certificate configuration.
+- Backend `proxy_pass` configuration.
+- Nginx configuration validation sebelum reload.
+
+Release `1.3.0` menjadi baseline untuk pengembangan BREBES-WAF berikutnya.
+
+---
 
 ## [1.2.0] - 2026-09-16
 
@@ -1577,6 +1774,7 @@ Struktur repository BREBES-WAF:
 | Version | Release Date | Status | Description |
 |---|---|---|---|
 | `Unreleased` | - | Development | Perubahan yang sedang dikembangkan |
+| `1.3.0` | `2026-09-17` | **Stable** | Reverse proxy common snippet, reverse proxy configuration generator, dan logging standardization |
 | `1.2.0` | `2026-09-16` | **Stable** | First-time deployment enhancement, configuration validation, response body inspection, dan logging standardization |
 | `1.1.0` | `2026-09-11` | **Stable** | Dependency automation, Ubuntu repository configuration, ModSecurity package detection, dan deployment preparation |
 | `1.0.0` | `2026-09-10` | **Stable** | Initial BREBES-WAF release |
