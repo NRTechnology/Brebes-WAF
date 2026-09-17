@@ -1175,6 +1175,10 @@ NGINX_DUMP="$(nginx -T 2>&1)" || {
     die "Gagal membaca effective Nginx configuration."
 }
 
+echo "=== DEBUG NGINX_DUMP MODSECURITY ==="
+printf '%s\n' "${NGINX_DUMP}" | grep -nEi 'modsecurity' || true
+echo "=== DEBUG END ==="
+
 if echo "${NGINX_DUMP}" |
     grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
     log_ok "ModSecurity aktif pada effective Nginx configuration."
