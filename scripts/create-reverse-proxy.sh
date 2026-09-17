@@ -16,9 +16,9 @@ usage() {
     echo "  $0 <domain> <ssl_certificate> <ssl_certificate_key> <proxy_pass>"
     echo
     echo "Example:"
-    echo "  $0 inspektorat.brebeskab.go.id \\"
-    echo "     /var/ssl_cert/star.brebeskab.go.id.crt \\"
-    echo "     /var/ssl_cert/star.brebeskab.go.id.key \\"
+    echo "  $0 app.example.com \\"
+    echo "     /var/ssl_cert/star.example.com.crt \\"
+    echo "     /var/ssl_cert/star.example.com.key \\"
     echo "     http://15.0.2.6"
     exit 1
 }

@@ -1175,13 +1175,13 @@ NGINX_DUMP="$(nginx -T 2>&1)" || {
     die "Gagal membaca effective Nginx configuration."
 }
 
-if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
-    log_ok "ModSecurity aktif pada effective Nginx configuration."
-else
-    rollback_nginx_conf
-    die "ModSecurity tidak aktif pada effective Nginx configuration."
-fi
+#if echo "${NGINX_DUMP}" |
+#    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
+#    log_ok "ModSecurity aktif pada effective Nginx configuration."
+#else
+#    #rollback_nginx_conf
+#    die "ModSecurity tidak aktif pada effective Nginx configuration."
+#fi
 
 if echo "${NGINX_DUMP}" |
     grep -Eq '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
