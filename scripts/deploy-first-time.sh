@@ -1183,7 +1183,7 @@ if echo "${NGINX_DUMP}" |
     grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
     log_ok "ModSecurity aktif pada effective Nginx configuration."
 else
-    rollback_nginx_conf
+    #rollback_nginx_conf
     die "ModSecurity tidak aktif pada effective Nginx configuration."
 fi
 
