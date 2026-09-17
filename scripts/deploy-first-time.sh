@@ -1175,43 +1175,17 @@ NGINX_DUMP="$(nginx -T 2>&1)" || {
     die "Gagal membaca effective Nginx configuration."
 }
 
-### start debug
-
-echo "=== DEBUG EXACT GREP ==="
-
-echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'
-
-GREP_STATUS=$?
-
-echo "grep exit code: ${GREP_STATUS}"
-
-echo "=== DEBUG EXACT LINE ==="
-echo "${NGINX_DUMP}" |
-    grep -nE '^[[:space:]]*modsecurity[[:space:]]+on;' || true
-
+echo "=== DEBUG NGINX_DUMP MODSECURITY ==="
+printf '%s\n' "${NGINX_DUMP}" | grep -nEi 'modsecurity' || true
 echo "=== DEBUG END ==="
 
-if [[ "${GREP_STATUS}" -eq 0 ]]; then
+if echo "${NGINX_DUMP}" |
+    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
     log_ok "ModSecurity aktif pada effective Nginx configuration."
 else
-    echo "[DEBUG] Validator menganggap ModSecurity tidak aktif."
-    exit 1
+    rollback_nginx_conf
+    die "ModSecurity tidak aktif pada effective Nginx configuration."
 fi
-
-### End debug
-
-#echo "=== DEBUG NGINX_DUMP MODSECURITY ==="
-#printf '%s\n' "${NGINX_DUMP}" | grep -nEi 'modsecurity' || true
-#echo "=== DEBUG END ==="
-
-#if echo "${NGINX_DUMP}" |
-#    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
-#    log_ok "ModSecurity aktif pada effective Nginx configuration."
-#else
-#    rollback_nginx_conf
-#    die "ModSecurity tidak aktif pada effective Nginx configuration."
-#fi
 
 if echo "${NGINX_DUMP}" |
     grep -Eq '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
