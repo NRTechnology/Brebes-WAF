@@ -171,6 +171,35 @@ on_error() {
     exit "${exit_code}"
 }
 
+# =============================================================================
+# Create Nginx Proxy Common Snippet
+# =============================================================================
+
+create_proxy_common_snippet() {
+    log_section "Nginx Proxy Common Snippet"
+
+    mkdir -p "${NGINX_SNIPPETS}"
+
+    cat > "${NGINX_SNIPPETS}/proxy-common.conf" <<'EOF'
+proxy_http_version 1.1;
+
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Port $server_port;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Real-IP $remote_addr;
+
+# Minta backend mengirim response tanpa kompresi
+proxy_set_header Accept-Encoding "";
+EOF
+
+    chmod 0644 "${NGINX_SNIPPETS}/proxy-common.conf"
+
+    log_ok "Nginx proxy common snippet berhasil dibuat:"
+    echo "    ${NGINX_SNIPPETS}/proxy-common.conf"
+}
+
 trap on_error ERR
 
 # =============================================================================
@@ -466,6 +495,12 @@ NGINX_VERSION="$(nginx -v 2>&1 | sed 's/^nginx version: //')"
 
 log_ok "Nginx tersedia."
 echo "    Version: ${NGINX_VERSION}"
+
+# =============================================================================
+# Nginx Proxy Common Snippet
+# =============================================================================
+
+create_proxy_common_snippet
 
 # =============================================================================
 # ModSecurity v3 Library Check
