@@ -1,0 +1,138 @@
+BREBES-WAF
+SOURCE-AVAILABLE LICENSE
+
+Copyright (c) 2026
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+Project / Brand:
+Brebes-WAF
+
+This software and its source code are made available under the terms
+of this Source-Available License.
+
+1. PERMITTED USE
+
+Permission is granted to any person or organization to:
+
+- use the software for personal purposes;
+- use the software for educational and learning purposes;
+- use the software for research and development;
+- use the software for internal organizational purposes;
+- study and inspect the source code;
+- modify the source code;
+- develop derivative works;
+- create and maintain forks;
+- test, evaluate, and deploy the software in their own environment.
+
+These permissions apply provided that the copyright notice and this
+license are preserved in copies or substantial portions of the software.
+
+2. SOURCE CODE AND DERIVATIVE WORKS
+
+Modification, enhancement, integration, and development of derivative
+works are permitted.
+
+A modified or derivative version may be distributed provided that:
+
+- the original copyright notice is retained;
+- this license is retained;
+- the origin of the original Brebes-WAF code is acknowledged; and
+- the modified portions are clearly identified where reasonably
+  necessary to distinguish them from the original work.
+
+3. COMMERCIAL USE
+
+Commercial use of the unmodified Brebes-WAF software is permitted.
+
+Commercial distribution, managed services, consulting, implementation,
+or other business activities involving Brebes-WAF do not by themselves
+transfer or grant ownership of the copyright.
+
+However, the creation, distribution, licensing, sale, or provision of
+a proprietary or closed-source product that is based substantially on
+Brebes-WAF, incorporates substantial Brebes-WAF source code, or uses
+Brebes-WAF as a proprietary component requires prior written permission
+from the copyright holder and may require a separate Commercial License.
+
+4. PROPRIETARY AND CLOSED-SOURCE PRODUCTS
+
+No permission is granted under this license to convert Brebes-WAF, or
+substantial portions of its source code, into a proprietary or
+closed-source product for distribution or commercial licensing without
+prior written authorization from the copyright holder.
+
+A separate commercial licensing agreement may define the permitted
+scope, distribution rights, sublicensing rights, support arrangements,
+and other commercial terms.
+
+5. COPYRIGHT AND ATTRIBUTION
+
+The copyright remains with:
+
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+"Brebes-WAF" and "NR Technology" may be used as project or brand
+references only where appropriate. Use of a project or brand name does
+not transfer copyright ownership or imply that NR Technology is the
+copyright holder.
+
+6. NO TRADEMARK LICENSE
+
+This license does not grant permission to use any trademark, service
+mark, trade name, logo, or other branding associated with Brebes-WAF or
+NR Technology, except as reasonably necessary to identify the original
+project and its origin.
+
+7. THIRD-PARTY COMPONENTS
+
+Brebes-WAF may contain, depend upon, reference, or integrate with
+third-party software, rulesets, libraries, configuration files, or
+other components.
+
+Such components are not necessarily covered by this license. Their
+respective licenses and copyright notices remain applicable.
+
+Users and distributors are responsible for complying with the licenses
+of third-party components.
+
+8. NO WARRANTY
+
+BREBES-WAF IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NON-INFRINGEMENT.
+
+THE COPYRIGHT HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+9. SECURITY SOFTWARE DISCLAIMER
+
+Brebes-WAF is security software intended to assist with web application
+protection and security monitoring.
+
+No security software can guarantee that a system, application, network,
+or service will be completely protected from attack, compromise,
+malware, data loss, or other security incidents.
+
+Users remain responsible for evaluating, configuring, testing,
+monitoring, and operating Brebes-WAF appropriately for their own
+environment.
+
+10. ACCEPTANCE
+
+By using, modifying, or distributing Brebes-WAF under this license, you
+accept the terms and conditions of this license.
+
+If any provision of this license is held unenforceable, the remaining
+provisions shall remain in effect to the extent permitted by applicable
+law.
+
+---
+
+Copyright (c) 2026
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+Brebes-WAF
+Source-Available License
