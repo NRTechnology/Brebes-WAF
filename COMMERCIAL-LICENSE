@@ -1,0 +1,241 @@
+BREBES-WAF
+COMMERCIAL LICENSE
+
+Copyright (c) 2026
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+Project:
+Brebes-WAF
+
+This Commercial License governs commercial use, redistribution,
+integration, modification, and licensing of Brebes-WAF where such use
+is not fully permitted by the accompanying Source-Available License.
+
+1. COPYRIGHT OWNERSHIP
+
+All copyright and intellectual property rights in the original
+Brebes-WAF source code remain with:
+
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+The Brebes-WAF project and its source code are not transferred or sold
+to the Licensee by this Commercial License.
+
+This license grants specific rights to use the software; it does not
+transfer ownership of the software or its copyright.
+
+2. COMMERCIAL LICENSE GRANT
+
+Subject to the applicable commercial agreement, the copyright holder
+grants the Licensee a non-exclusive, non-transferable license to:
+
+- deploy Brebes-WAF in commercial environments;
+- use Brebes-WAF as part of commercial infrastructure;
+- integrate Brebes-WAF with commercial applications and services;
+- modify Brebes-WAF for the Licensee's operational requirements;
+- provide professional services involving Brebes-WAF;
+- provide managed security, hosting, or infrastructure services using
+  Brebes-WAF; and
+- distribute authorized modified or integrated versions when expressly
+  permitted by the applicable commercial agreement.
+
+The exact scope of these rights is determined by the commercial
+agreement, invoice, order, or other written authorization issued by
+the copyright holder.
+
+3. PROPRIETARY PRODUCTS
+
+A Commercial License may authorize the Licensee to incorporate
+Brebes-WAF or substantial portions of its source code into a
+proprietary, closed-source, or commercially licensed product.
+
+Such authorization is limited to the scope expressly granted in the
+commercial agreement.
+
+Without an applicable Commercial License or other written authorization,
+the Source-Available License does not grant permission to distribute
+Brebes-WAF as a proprietary or closed-source product.
+
+4. REDISTRIBUTION
+
+Redistribution of Brebes-WAF in commercial products, appliances,
+services, distributions, managed services, or software packages
+requires the redistribution rights expressly granted by the applicable
+commercial agreement.
+
+Unless expressly authorized, the Licensee may not:
+
+- sublicense Brebes-WAF to third parties;
+- sell Brebes-WAF itself as a standalone proprietary product;
+- remove copyright notices from the original source code;
+- represent Brebes-WAF as software independently authored by the
+  Licensee; or
+- grant third parties broader rights than those granted to the
+  Licensee.
+
+5. MODIFICATIONS
+
+The Licensee may modify Brebes-WAF within the scope of the commercial
+license.
+
+Unless otherwise agreed in writing, copyright notices identifying the
+original Brebes-WAF source must remain intact.
+
+The Licensee may retain ownership of independently developed code that
+does not constitute a derivative work of Brebes-WAF, subject to
+applicable law and the terms of the commercial agreement.
+
+6. SOURCE CODE
+
+Commercial licensing does not require the copyright holder to provide
+additional source code, development materials, private repositories,
+development infrastructure, or proprietary components beyond those
+expressly included in the commercial agreement.
+
+Any separately supplied proprietary components remain subject to their
+respective terms.
+
+7. THIRD-PARTY COMPONENTS
+
+Brebes-WAF may include, reference, integrate with, or depend upon
+third-party software, rulesets, libraries, modules, configuration
+files, or other components.
+
+Third-party components are not transferred under this Commercial
+License unless expressly stated.
+
+Their respective copyright notices and license terms remain applicable.
+
+The Licensee is responsible for complying with applicable third-party
+licenses.
+
+8. SUPPORT AND MAINTENANCE
+
+This Commercial License does not automatically include:
+
+- technical support;
+- installation services;
+- configuration services;
+- security assessment;
+- custom development;
+- guaranteed response times;
+- software maintenance;
+- updates or upgrades; or
+- service-level agreements.
+
+Such services may be provided under a separate commercial agreement.
+
+9. LICENSE FEES
+
+Commercial license fees, if applicable, are determined separately by
+the copyright holder.
+
+A commercial license may be granted on a project basis, organization
+basis, deployment basis, server basis, product basis, subscription
+basis, or another mutually agreed licensing model.
+
+The applicable fee and scope are determined by the written commercial
+agreement or other written authorization.
+
+10. TERM AND TERMINATION
+
+Unless otherwise specified in the applicable commercial agreement,
+the commercial license begins when the written authorization becomes
+effective.
+
+A commercial license may terminate if the Licensee materially
+breaches its applicable licensing agreement and fails to remedy the
+breach within the period specified in that agreement.
+
+Upon termination, the Licensee must cease uses that are no longer
+authorized by the applicable commercial agreement, except where
+continued use is expressly permitted by that agreement or applicable
+law.
+
+11. TRADEMARKS AND BRANDING
+
+This Commercial License does not automatically grant rights to use
+the trademarks, logos, service marks, trade names, or other branding
+of Brebes-WAF or NR Technology.
+
+The name "Brebes-WAF" may be used to identify the original software
+where reasonably necessary and accurate.
+
+Use of "NR Technology" does not imply that NR Technology is the
+copyright holder.
+
+12. SECURITY SOFTWARE DISCLAIMER
+
+Brebes-WAF is security software intended to assist with web application
+protection and security monitoring.
+
+No security software can guarantee that any system, application,
+network, or service will be completely protected against attacks,
+malware, unauthorized access, data loss, or other security incidents.
+
+The Licensee remains responsible for security architecture,
+configuration, testing, monitoring, maintenance, incident response,
+and operational decisions relating to its environment.
+
+13. NO WARRANTY
+
+BREBES-WAF IS PROVIDED "AS IS", UNLESS OTHERWISE AGREED IN WRITING.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT
+HOLDER DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
+NON-INFRINGEMENT, AND THAT THE SOFTWARE WILL BE ERROR-FREE OR
+UNINTERRUPTED.
+
+14. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT
+HOLDER SHALL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL,
+CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA,
+REVENUE, PROFITS, BUSINESS, OR OTHER ECONOMIC LOSS ARISING FROM OR
+RELATED TO THE USE OF BREBES-WAF.
+
+Any liability expressly agreed in a separate commercial agreement
+shall be governed by that agreement.
+
+15. NO IMPLIED RIGHTS
+
+Rights not expressly granted by the applicable Commercial License
+remain with the copyright holder.
+
+No license or right is granted by implication, estoppel, exhaustion,
+or otherwise beyond the rights expressly stated in the applicable
+commercial agreement and this license.
+
+16. PRIORITY OF COMMERCIAL AGREEMENT
+
+If a signed commercial agreement, order, subscription agreement,
+enterprise agreement, or other written authorization conflicts with
+this Commercial License, the specific written commercial agreement
+controls for the licensed deployment to the extent of the conflict.
+
+17. GOVERNING TERMS
+
+The applicable commercial agreement may specify the governing law,
+jurisdiction, dispute resolution mechanism, term, fees, support
+obligations, and other commercial conditions.
+
+If no separate commercial agreement exists, this document does not by
+itself grant commercial rights beyond those already granted by the
+Brebes-WAF Source-Available License.
+
+18. ACCEPTANCE
+
+Use of Brebes-WAF under a Commercial License constitutes acceptance of
+the applicable commercial terms.
+
+For commercial licensing inquiries, contact the copyright holder or
+authorized representative.
+
+---
+
+Copyright (c) 2026
+Hendrawan Aprillia Ashari, S.T., M.Kom.
+
+Brebes-WAF
+Commercial License
