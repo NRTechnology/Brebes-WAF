@@ -3,18 +3,18 @@
 # =============================================================================
 # BREBES-WAF
 # =============================================================================
-# Script  : check-last-detection.sh
+# Script  : analyze-detection.sh
 # Version : 1.4.0
 #
 # Description:
 #   Analyze ModSecurity audit logs for a specific domain and date.
 #
 # Usage:
-#   ./check-last-detection.sh <domain> [YYYYMMDD]
+#   ./analyze-detection.sh <domain> [YYYYMMDD]
 #
 # Example:
-#   ./check-last-detection.sh sppdkominfo.brebeskab.go.id
-#   ./check-last-detection.sh sppdkominfo.brebeskab.go.id 20260915
+#   ./analyze-detection.sh app.example.com
+#   ./analyze-detection.sh app.example.com 20260915
 #
 # Audit log structure:
 #
