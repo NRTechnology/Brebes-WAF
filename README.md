@@ -22,7 +22,7 @@ Persyaratan:
 
 \- Ubuntu Server 26.04 LTS
 
-\- Root atau user dengan akses \`sudo\`
+\- Root atau user dengan akses `sudo`
 
 \- Internet Connection
 
@@ -30,15 +30,15 @@ Persyaratan:
 
 **### Supported Ubuntu Version**
 
-\| Ubuntu Version | Status |
+| Ubuntu Version | Status |
 
-\|---|---|
+|---|---|
 
-\| Ubuntu Server 26.04 LTS | **\*\*Standard\*\*** |
+| Ubuntu Server 26.04 LTS | **\*\*Standard\*\*** |
 
-\| Ubuntu Server 24.04 LTS | Compatibility |
+| Ubuntu Server 24.04 LTS | Compatibility |
 
-\| Ubuntu Server 22.04 LTS | Compatibility |
+| Ubuntu Server 22.04 LTS | Compatibility |
 
 Ubuntu Server 26.04 LTS digunakan sebagai baseline utama untuk pengembangan, testing, dan deployment BREBES-WAF.
 
@@ -50,69 +50,69 @@ Versi Ubuntu lainnya dapat digunakan apabila seluruh dependency tersedia dan pro
 
 Install **\*\*Ubuntu Server 26.04 LTS\*\*** pada server yang akan digunakan sebagai BREBES-WAF.
 
-Setelah instalasi selesai, login menggunakan user dengan akses \`sudo\`.
+Setelah instalasi selesai, login menggunakan user dengan akses `sudo`.
 
 Perbarui sistem:
 
-\`\`\`bash
+```bash
 
 sudo apt update
 
 sudo apt upgrade -y
 
-\`\`\`
+```
 
 **---**
 
 **## 2. Install Git**
 
-\`\`\`bash
+```bash
 
 sudo apt install -y git
 
 git --version
 
-\`\`\`
+```
 
 **---**
 
 **## 3. Change to the /opt Directory**
 
-\`\`\`bash
+```bash
 
 cd /opt
 
-\`\`\`
+```
 
 **---**
 
 **## 4. Clone the Repository**
 
-Clone branch \`main\` yang merupakan stable branch:
+Clone branch `main` yang merupakan stable branch:
 
-\`\`\`bash
+```bash
 
-sudo git clone https\://github.com/NRTechnology/Brebes-WAF.git
+sudo git clone https://github.com/NRTechnology/Brebes-WAF.git
 
 cd /opt/Brebes-WAF
 
-\`\`\`
+```
 
 Verifikasi branch:
 
-\`\`\`bash
+```bash
 
 git branch
 
-\`\`\`
+```
 
 Pastikan branch yang digunakan adalah:
 
-\`\`\`text
+```text
 
 main
 
-\`\`\`
+```
 
 **---**
 
@@ -120,13 +120,13 @@ main
 
 BREBES-WAF menyediakan script untuk melakukan pemeriksaan dan persiapan dependency.
 
-\`\`\`bash
+```bash
 
-sudo chmod +x scripts/check-dependencies.sh
+sudo chmod +x scripts/install-requirements.sh
 
-sudo ./scripts/check-dependencies.sh
+sudo ./scripts/install-requirements.sh
 
-\`\`\`
+```
 
 Script melakukan pemeriksaan terhadap:
 
@@ -160,17 +160,17 @@ Script melakukan pemeriksaan terhadap:
 
 Untuk instalasi pertama BREBES-WAF:
 
-\`\`\`bash
+```bash
 
-sudo chmod +x scripts/deploy-first-time.sh
+sudo chmod +x scripts/install-requirements.sh
 
 sudo chmod +x scripts/create-reverse-proxy.sh
 
-sudo ./scripts/deploy-first-time.sh
+sudo ./scripts/install-requirements.sh
 
-\`\`\`
+```
 
-Script \`deploy-first-time.sh\` digunakan untuk persiapan dan deployment awal BREBES-WAF.
+Script `install-requirements.sh` digunakan untuk persiapan dan deployment awal BREBES-WAF.
 
 Proses mencakup:
 
@@ -184,21 +184,21 @@ Proses mencakup:
 
 \- Pemeriksaan OWASP CRS
 
-\- Persiapan \`crs-load.conf\`
+\- Persiapan `crs-load.conf`
 
 \- Pembuatan konfigurasi ModSecurity
 
-\- Pembuatan \`/etc/nginx/modsecurity\_includes.conf\`
+\- Pembuatan `/etc/nginx/modsecurity_includes.conf`
 
 \- Automatic rule discovery
 
-\- Pemeriksaan \`log\_format reverser\`
+\- Pemeriksaan `log_format reverser`
 
 \- Pemeriksaan global Nginx access log
 
-\- Pemeriksaan \`modsecurity on\`
+\- Pemeriksaan `modsecurity on`
 
-\- Pemeriksaan \`modsecurity\_rules\_file\`
+\- Pemeriksaan `modsecurity_rules_file`
 
 \- Validasi jumlah BREBES-WAF rules
 
@@ -216,51 +216,51 @@ Proses mencakup:
 
 Konfigurasi utama:
 
-\`\`\`text
+```text
 
 /etc/nginx/nginx.conf
 
-\`\`\`
+```
 
-Format access log \`reverser\`:
+Format access log `reverser`:
 
-\`\`\`nginx
+```nginx
 
-log\_format reverser
+log_format reverser
 
-  '$remote\_addr '
+  '$remote_addr '
 
-  '[$time\_local] '
+  '[$time_local] '
 
   '"$request" '
 
   '$status '
 
-  '$body\_bytes\_sent '
+  '$body_bytes_sent '
 
-  '"$http\_referer" '
+  '"$http_referer" '
 
-  '"$http\_user\_agent" '
+  '"$http_user_agent" '
 
   'host="$host" '
 
-  'xff="$http\_x\_forwarded\_for" '
+  'xff="$http_x_forwarded_for" '
 
-  'rt=$request\_time '
+  'rt=$request_time '
 
-  'urt=$upstream\_response\_time '
+  'urt=$upstream_response_time '
 
-  'upstream="$upstream\_addr"';
+  'upstream="$upstream_addr"';
 
-\`\`\`
+```
 
 Global access log:
 
-\`\`\`nginx
+```nginx
 
-access\_log /var/log/nginx/access.log reverser;
+access_log /var/log/nginx/access.log reverser;
 
-\`\`\`
+```
 
 Format ini digunakan untuk security monitoring, detection analysis, incident investigation, dan korelasi dengan ModSecurity Audit Log.
 
@@ -309,7 +309,7 @@ Fungsi utama:
 - Meneruskan alamat client melalui `X-Forwarded-For` dan `X-Real-IP`.
 - Meminta backend tidak mengirim response terkompresi melalui `Accept-Encoding`.
 
-`proxy-common.conf` dibuat oleh `deploy-first-time.sh` setelah Nginx dipastikan tersedia.
+`proxy-common.conf` dibuat oleh `install-requirements.sh` setelah Nginx dipastikan tersedia.
 
 **Create Reverse Proxy Script**
 
@@ -434,29 +434,29 @@ BREBES-WAF menggunakan **\*\*ModSecurity v3\*\***.
 
 Konfigurasi utama:
 
-\`\`\`text
+```text
 
 /etc/nginx/modsecurity.conf
 
-\`\`\`
+```
 
 Generated include:
 
-\`\`\`text
+```text
 
-/etc/nginx/modsecurity\_includes.conf
+/etc/nginx/modsecurity_includes.conf
 
-\`\`\`
+```
 
 Konfigurasi Nginx:
 
-\`\`\`nginx
+```nginx
 
 modsecurity on;
 
-modsecurity\_rules\_file /etc/nginx/modsecurity\_includes.conf;
+modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;
 
-\`\`\`
+```
 
 **---**
 
@@ -466,15 +466,15 @@ BREBES-WAF menggunakan OWASP Core Rule Set sebagai salah satu security layer.
 
 Konfigurasi CRS:
 
-\`\`\`text
+```text
 
 /etc/nginx/modsecurity/crs-load.conf
 
-\`\`\`
+```
 
 Struktur rule:
 
-\`\`\`text
+```text
 
 rules/
 
@@ -494,15 +494,15 @@ rules/
 
 └── 90-local/
 
-\`\`\`
+```
 
-Deployment script secara otomatis mencari file \`\*.conf\` pada:
+Deployment script secara otomatis mencari file `\*.conf` pada:
 
-\`\`\`text
+```text
 
 /opt/Brebes-WAF/rules/
 
-\`\`\`
+```
 
 **---**
 
@@ -510,15 +510,15 @@ Deployment script secara otomatis mencari file \`\*.conf\` pada:
 
 BREBES-WAF mengaktifkan response body inspection:
 
-\`\`\`apache
+```apache
 
 SecResponseBodyAccess On
 
-\`\`\`
+```
 
 MIME type yang diperiksa:
 
-\`\`\`text
+```text
 
 text/plain
 
@@ -528,25 +528,48 @@ text/xml
 
 application/json
 
-\`\`\`
+```
 
 Batas response body:
 
-\`\`\`apache
+```apache
 
 SecResponseBodyLimit 1048576
 
 SecResponseBodyLimitAction ProcessPartial
 
-\`\`\`
+```
 
 Konfigurasi ini membantu pemeriksaan security event pada response aplikasi dengan tetap mempertimbangkan penggunaan resource.
 
 **---**
 
-**## 11. ModSecurity Audit Logging**
+**## ModSecurity Baseline
 
-\`\`\`apache
+Konfigurasi dasar installer menggunakan nilai berikut:
+
+| Directive | Nilai |
+|---|---|
+| `SecRuleEngine` | `On` |
+| `SecRequestBodyAccess` | `On` |
+| `SecRequestBodyLimit` | `134217728` (128 MiB) |
+| `SecRequestBodyNoFilesLimit` | `131072` |
+| `SecRequestBodyLimitAction` | `Reject` |
+| `SecArgumentsLimit` | `1000` |
+| `SecRequestBodyJsonDepthLimit` | `512` |
+| `SecPcreMatchLimit` | `100000` |
+| `SecPcreMatchLimitRecursion` | `100000` |
+| `SecResponseBodyAccess` | `On` |
+| `SecResponseBodyLimit` | `1048576` (1 MiB) |
+| `SecResponseBodyLimitAction` | `ProcessPartial` |
+
+Installer juga memasang rule dasar `200007` untuk menolak request dengan jumlah argumen berlebih (status 400). Jangan menaikkan batas argumen hanya agar request pengujian tertentu dapat melewati parser; evaluasi kebutuhan aplikasi dan dampak keamanan terlebih dahulu.
+
+---
+
+## 11. ModSecurity Audit Logging**
+
+```apache
 
 SecAuditEngine RelevantOnly
 
@@ -558,7 +581,7 @@ SecAuditLogType Concurrent
 
 SecAuditLogStorageDir /var/log/nginx/modsecurity/
 
-\`\`\`
+```
 
 Audit log digunakan untuk detection analysis, incident investigation, false positive analysis, rule tuning, security monitoring, dan incident response.
 
@@ -566,15 +589,15 @@ Audit log digunakan untuk detection analysis, incident investigation, false posi
 
 **## 12. Create the ModSecurity Audit Log Directory**
 
-\`\`\`bash
+```bash
 
 sudo mkdir -p /var/log/nginx/modsecurity
 
-sudo chown www-data\:adm /var/log/nginx/modsecurity
+sudo chown www-data:adm /var/log/nginx/modsecurity
 
 sudo chmod 750 /var/log/nginx/modsecurity
 
-\`\`\`
+```
 
 First-time deployment script dapat melakukan persiapan directory sesuai konfigurasi deployment.
 
@@ -582,87 +605,87 @@ First-time deployment script dapat melakukan persiapan directory sesuai konfigur
 
 **## 13. Verify the Installation**
 
-\`\`\`bash
+```bash
 
 sudo nginx -t
 
 sudo systemctl status nginx
 
-\`\`\`
+```
 
 Expected result:
 
-\`\`\`text
+```text
 
 syntax is ok
 
 test is successful
 
-\`\`\`
+```
 
 **---**
 
 **## 14. Verify Effective Nginx Configuration**
 
-\`\`\`bash
+```bash
 
 sudo nginx -T > /tmp/nginx-effective.txt 2>&1
 
-\`\`\`
+```
 
 Periksa konfigurasi utama:
 
-\`\`\`bash
+```bash
 
-grep -nE 'log\_format reverser|access\_log /var/log/nginx/access.log reverser|modsecurity on|modsecurity\_rules\_file' /tmp/nginx-effective.txt
+grep -nE 'log_format reverser|access_log /var/log/nginx/access.log reverser|modsecurity on|modsecurity_rules_file' /tmp/nginx-effective.txt
 
-\`\`\`
+```
 
 Konfigurasi penting:
 
-\`\`\`nginx
+```nginx
 
-log\_format reverser
+log_format reverser
 
-access\_log /var/log/nginx/access.log reverser;
+access_log /var/log/nginx/access.log reverser;
 
 modsecurity on;
 
-modsecurity\_rules\_file /etc/nginx/modsecurity\_includes.conf;
+modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;
 
-\`\`\`
+```
 
 **---**
 
 **## 15. Verify ModSecurity Include**
 
-\`\`\`bash
+```bash
 
-sudo cat /etc/nginx/modsecurity\_includes.conf
+sudo cat /etc/nginx/modsecurity_includes.conf
 
-\`\`\`
+```
 
 File harus memuat:
 
-\`\`\`text
+```text
 
 /etc/nginx/modsecurity.conf
 
 /etc/nginx/modsecurity/crs-load.conf
 
-\`\`\`
+```
 
 serta BREBES-WAF rules dari:
 
-\`\`\`text
+```text
 
 /opt/Brebes-WAF/rules/
 
-\`\`\`
+```
 
 Contoh:
 
-\`\`\`text
+```text
 
 Include /opt/Brebes-WAF/rules/10-upload/1001001-upload-allowed-extension.conf
 
@@ -670,7 +693,7 @@ Include /opt/Brebes-WAF/rules/20-webshell/alfa/2002000-fingerprint.conf
 
 Include /opt/Brebes-WAF/rules/60-git/6001001-git-directory.conf
 
-\`\`\`
+```
 
 **---**
 
@@ -678,25 +701,25 @@ Include /opt/Brebes-WAF/rules/60-git/6001001-git-directory.conf
 
 Setelah first-time deployment berhasil, deployment berikutnya menggunakan:
 
-\`\`\`bash
+```bash
 
 sudo ./scripts/deploy.sh
 
-\`\`\`
+```
 
 Jika diperlukan:
 
-\`\`\`bash
+```bash
 
 sudo chmod +x scripts/deploy.sh
 
-\`\`\`
+```
 
 **### Deployment Workflow**
 
 First-time deployment:
 
-\`\`\`text
+```text
 
 Check Dependencies
 
@@ -742,11 +765,11 @@ Verify
 
 BREBES-WAF Active
 
-\`\`\`
+```
 
 Deployment berikutnya:
 
-\`\`\`text
+```text
 
 Update Repository
 
@@ -792,7 +815,7 @@ Reload
 
 Verify
 
-\`\`\`
+```
 
 **---**
 
@@ -800,119 +823,105 @@ Verify
 
 Audit log:
 
-\`\`\`text
+```text
 
 /var/log/nginx/modsecurity/
 
-\`\`\`
+```
 
 File audit log terbaru:
 
-\`\`\`bash
+```bash
 
 find /var/log/nginx/modsecurity -type f | sort | tail -1
 
-\`\`\`
+```
 
 Display:
 
-\`\`\`bash
+```bash
 
 cat "$(find /var/log/nginx/modsecurity -type f | sort | tail -1)"
 
-\`\`\`
+```
 
 Jika diperlukan:
 
-\`\`\`bash
+```bash
 
 strings "$(find /var/log/nginx/modsecurity -type f | sort | tail -1)"
 
-\`\`\`
+```
 
 **---**
 
 **## 18. Search BREBES-WAF Detection**
 
-\`\`\`bash
+```bash
 
 grep -R "BREBES-WAF" /var/log/nginx/modsecurity
 
-\`\`\`
+```
 
 Detection terbaru:
 
-\`\`\`bash
+```bash
 
 find /var/log/nginx/modsecurity -type f -exec strings {} \\; | grep "BREBES-WAF" | tail -1
 
-\`\`\`
+```
 
 **---**
 
-**## 19. Detection Log Analysis**
+**## 19. Detection Log Analysis
 
-**### Check Last Detection**
+Gunakan `scripts/analyze-detection.sh` untuk menganalisis ModSecurity audit log berdasarkan domain dan tanggal.
 
-\`\`\`bash
+```bash
+sudo chmod +x scripts/analyze-detection.sh
 
-sudo chmod +x scripts/check-last-detection.sh
+# Analisis tanggal hari ini
+sudo ./scripts/analyze-detection.sh app.example.com
 
-sudo ./scripts/check-last-detection.sh
+# Analisis tanggal tertentu (YYYYMMDD)
+sudo ./scripts/analyze-detection.sh app.example.com 20261023
+```
 
-\`\`\`
+Audit log dibaca dari:
 
-Script digunakan untuk membantu menampilkan detection BREBES-WAF dan OWASP CRS berdasarkan domain yang diperiksa.
+```text
+/var/log/nginx/modsecurity/<YYYYMMDD>/
+```
 
-**### Today Detection**
+Domain dicocokkan berdasarkan header `Host` pada section B. Pesan deteksi dibaca dari section H. Nilai `[hostname "..."]` pada section H tidak digunakan untuk menentukan domain karena dapat berisi alamat server/backend.
 
-\`\`\`bash
+Ringkasan menampilkan jumlah audit log yang diproses, log yang cocok dengan domain, log deteksi, serta jumlah baris deteksi BREBES-WAF dan OWASP CRS.
 
-sudo chmod +x scripts/today-detection.sh
+Catatan: rule dasar ModSecurity seperti `200007` tidak otomatis dihitung sebagai deteksi BREBES-WAF atau OWASP CRS. Untuk investigasi, cocokkan hasil analyzer dengan Nginx access/error log dan audit log mentah.
 
-sudo ./scripts/today-detection.sh
+---
 
-\`\`\`
-
-Hasil detection dipisahkan menjadi:
-
-\`\`\`text
-
-\===== BREBES-WAF =====
-
-\`\`\`
-
-dan:
-
-\`\`\`text
-
-\===== OWASP CRS =====
-
-\`\`\`
-
-**---**
-
-**## 20. Backup and Rollback**
+## 20. Backup and Rollback**
 
 Generated configuration:
 
-\`\`\`text
+```text
 
-/etc/nginx/modsecurity\_includes.conf
+/etc/nginx/modsecurity_includes.conf
 
-\`\`\`
+```
 
 Backup:
 
-\`\`\`text
+```text
 
-/etc/nginx/modsecurity\_includes.conf.bak
+/etc/nginx/modsecurity_includes.conf.bak
 
-\`\`\`
+```
 
 Workflow:
 
-\`\`\`text
+```text
 
 Backup
 
@@ -946,7 +955,7 @@ Reload
 
 Verify
 
-\`\`\`
+```
 
 Apabila validasi atau reload gagal, konfigurasi sebelumnya dapat dipulihkan menggunakan mekanisme rollback pada deployment script.
 
@@ -954,33 +963,44 @@ Apabila validasi atau reload gagal, konfigurasi sebelumnya dapat dipulihkan meng
 
 **## 21. BREBES-WAF Rules**
 
-\| Range | Category | Description |
+| Range | Category | Description |
 
-\|---|---|---|
+|---|---|---|
 
-\| \`1000000-1000999\` | Core | Core BREBES-WAF rules |
+| `1000000-1000999` | Core | Core BREBES-WAF rules |
 
-\| \`1001000-1001999\` | Upload | Upload protection |
+| `1001000-1001999` | Upload | Upload protection |
 
-\| \`2001000-2001999\` | Webshell | Webshell detection/protection |
+| `2001000-2001999` | Webshell | Webshell detection/protection |
 
-\| \`3001000-3001999\` | WordPress | WordPress protection |
+| `3001000-3001999` | WordPress | WordPress protection |
 
-\| \`4001000-4001999\` | Malware | Malware detection |
+| `4001000-4001999` | Malware | Malware detection |
 
-\| \`5001000-5001999\` | Generic | Generic security rules |
+| `5001000-5001999` | Generic | Generic security rules |
 
-\| \`6001000-6001999\` | Git | Git repository protection |
+| `6001000-6001999` | Git | Git repository protection |
 
-\| \`9001000-9001999\` | Local | Local/deployment-specific rules |
+| `9001000-9001999` | Local | Local/deployment-specific rules |
 
 **---**
 
-**## 22. Git Repository Protection**
+**### Generic Rules saat ini
+
+| Rule ID | File | Fungsi | Tindakan |
+|---|---|---|---|
+| `5001001` | `rules/50-generic/5001001-block-content-encoding-gzip.conf` | Mencatat respons dengan header `Content-Encoding: gzip`. | `pass` + logging; tidak memblokir respons. |
+| `5001002` | `rules/50-generic/5001002-php2shell-upload-progress.conf` | Mendeteksi argumen `PHP_SESSION_UPLOAD_PROGRESS` sebagai indikator permintaan mencurigakan. | `pass` + audit logging; deteksi saja, bukan pemblokiran. |
+
+Rule `5001002` bukan pengganti patch keamanan PHP. Request juga dapat ditolak lebih awal oleh batas parser ModSecurity atau OWASP CRS sebelum rule ini menghasilkan log. Karena itu, tidak adanya log `5001002` tidak dengan sendirinya membuktikan bahwa request lolos dari seluruh perlindungan.
+
+---
+
+## 22. Git Repository Protection**
 
 Perlindungan mencakup:
 
-\`\`\`text
+```text
 
 /.git/
 
@@ -996,15 +1016,15 @@ Perlindungan mencakup:
 
 /.git/refs/
 
-\`\`\`
+```
 
 Rule Git:
 
-\`\`\`text
+```text
 
 rules/60-git/
 
-\`\`\`
+```
 
 **---**
 
@@ -1030,7 +1050,7 @@ Allowed extensions dikontrol melalui BREBES-WAF upload rules.
 
 Setiap perubahan rule harus melalui:
 
-\`\`\`text
+```text
 
 Rule Development
 
@@ -1070,27 +1090,27 @@ Deployment
 
 Production Verification
 
-\`\`\`
+```
 
 **### Positive Test**
 
 Request berbahaya yang seharusnya diblokir:
 
-\`\`\`text
+```text
 
 HTTP 403
 
-\`\`\`
+```
 
 **### Negative Test**
 
 Request legitimate harus tetap dapat diproses:
 
-\`\`\`text
+```text
 
 HTTP 200
 
-\`\`\`
+```
 
 atau response normal aplikasi.
 
@@ -1104,7 +1124,7 @@ Setiap rule baru harus diuji terhadap request legitimate untuk memastikan rule t
 
 Analisis keamanan sebaiknya dilakukan dengan mengkorelasikan:
 
-\`\`\`text
+```text
 
 Nginx Access Log
 
@@ -1124,7 +1144,7 @@ Application Log
 
 System Log
 
-\`\`\`
+```
 
 Timestamp filesystem tidak boleh digunakan sebagai satu-satunya dasar untuk menentukan waktu suatu aktivitas dalam investigasi insiden.
 
@@ -1134,7 +1154,7 @@ Metadata filesystem dapat berubah atau dimanipulasi.
 
 **## 26. Repository Structure**
 
-\`\`\`text
+```text
 
 BREBES-WAF/
 
@@ -1185,100 +1205,58 @@ BREBES-WAF/
 |
 
 ├── scripts/
-
-│   ├── check-dependencies.sh
-
-│   ├── check-last-detection.sh
-
-│   ├── create-reverse-proxy.sh
-
-│   ├── deploy-first-time.sh
-
-│   ├── deploy.sh
-
-│   └── today-detection.sh
-
-|
+│   ├── analyze-detection.sh
+│   ├── create-reverse-proxy.sh
+│   ├── deploy.sh
+│   └── install-requirements.sh
 
 └── tests/
 
-\`\`\`
+```
 
 **---**
 
-**## 27. Recommended Deployment**
+**## 27. Recommended Deployment
 
-Untuk deployment baru:
-
-\`\`\`bash
-
-cd /opt
-
-sudo git clone https\://github.com/NRTechnology/Brebes-WAF.git
-
-cd /opt/Brebes-WAF
-
-sudo chmod +x scripts/check-dependencies.sh
-
-sudo chmod +x scripts/deploy-first-time.sh
-
-sudo ./scripts/check-dependencies.sh
-
-sudo ./scripts/deploy-first-time.sh
-
-\`\`\`
-
-Setelah selesai:
-
-\`\`\`bash
-
-sudo nginx -t
-
-sudo systemctl status nginx
-
-\`\`\`
-
-Verifikasi:
-
-\`\`\`bash
-
-sudo nginx -T > /tmp/nginx-effective.txt 2>&1
-
-\`\`\`
-
-**---**
-
-**### Create Reverse Proxy**
-
-Setelah Nginx dan BREBES-WAF siap, buat konfigurasi reverse proxy:
+Untuk instalasi baru:
 
 ```bash
-sudo ./scripts/create-reverse-proxy.sh \
-    app.example.com \
-    /var/ssl_cert/example.com.crt \
-    /var/ssl_cert/example.com.key \
+cd /opt
+sudo git clone https://github.com/NRTechnology/Brebes-WAF.git
+cd /opt/Brebes-WAF
+
+sudo chmod +x scripts/install-requirements.sh
+sudo ./scripts/install-requirements.sh
+```
+
+Installer memerlukan hak root/sudo dan membuat backup konfigurasi existing sebelum modifikasi. Setelah selesai, verifikasi:
+
+```bash
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+sudo nginx -T > /tmp/nginx-effective.txt 2>&1
+```
+
+Buat virtual host reverse proxy setelah sertifikat TLS dan alamat origin siap:
+
+```bash
+sudo chmod +x scripts/create-reverse-proxy.sh
+sudo ./scripts/create-reverse-proxy.sh \\
+    app.example.com \\
+    /var/ssl_cert/example.com.crt \\
+    /var/ssl_cert/example.com.key \\
     http://192.0.2.10:8080
 ```
 
-Review konfigurasi:
+Script pembuatan virtual host menjalankan `nginx -t`, tetapi tidak melakukan reload otomatis. Review konfigurasi, lalu jalankan `sudo systemctl reload nginx` setelah validasi berhasil.
 
-```bash
-sudo nginx -T
-```
+---
 
-Kemudian reload:
-
-```bash
-sudo systemctl reload nginx
-```
-
-**---**
-
-**## 28. Subsequent Deployment**
+## 28. Subsequent Deployment**
 
 Setelah BREBES-WAF terpasang:
 
-\`\`\`bash
+```bash
 
 cd /opt/Brebes-WAF
 
@@ -1286,7 +1264,7 @@ git pull --ff-only origin main
 
 sudo ./scripts/deploy.sh
 
-\`\`\`
+```
 
 **---**
 

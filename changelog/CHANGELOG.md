@@ -40,6 +40,105 @@ Belum ada.
 
 ---
 
+## [1.4.0] - 2026-10-23
+
+Release kelima BREBES-WAF.
+
+Release ini memperbarui proses persiapan instalasi dan analisis detection log, serta menambahkan rule generic untuk mencatat indikator terkait PHP upload progress dan response gzip. Rule yang bersifat logging tetap tidak memblokir request atau response.
+
+### Added
+
+#### 1. Installation Requirements Script
+
+Menambahkan/menstandarkan script persiapan instalasi:
+
+    scripts/install-requirements.sh
+
+Versi script: `1.4.0`.
+
+Script mendukung Ubuntu 26.04 sebagai target utama, serta Ubuntu 24.04 dan 22.04. Script menyiapkan dependency dan konfigurasi Nginx, ModSecurity v3, serta OWASP CRS, kemudian memvalidasi konfigurasi runtime.
+
+Backup konfigurasi awal disimpan di:
+
+    /opt/Brebes-WAF/backup/orig/<YYYYMMDD-HHMMSS>/
+
+#### 2. Detection Log Analysis
+
+Menambahkan/menstandarkan:
+
+    scripts/analyze-detection.sh
+
+Versi script: `1.4.0`.
+
+Script menganalisis ModSecurity audit log berdasarkan domain dan tanggal opsional (`YYYYMMDD`) dari direktori:
+
+    /var/log/nginx/modsecurity/<date>/
+
+Analisis menggunakan nilai HTTP Host pada section B untuk mencocokkan domain, dan section H untuk membaca informasi deteksi. Hasil BREBES-WAF dan OWASP CRS dipisahkan untuk memudahkan investigasi dan analisis false positive.
+
+#### 3. Generic Rule: PHP Upload Progress
+
+Menambahkan rule:
+
+    rules/50-generic/5001002-php2shell-upload-progress.conf
+
+Rule memantau argumen `PHP_SESSION_UPLOAD_PROGRESS` pada phase 2 dan mencatat event melalui log/audit log. Rule menggunakan `pass`, sehingga berfungsi sebagai deteksi/logging dan bukan pemblokiran.
+
+#### 4. Generic Rule: Gzip Response Header
+
+Menambahkan rule:
+
+    rules/50-generic/5001001-block-content-encoding-gzip.conf
+
+Rule memantau response header `Content-Encoding: gzip` pada phase 3 dan mencatat event. Rule menggunakan `pass`; nama file tidak berarti response gzip diblokir.
+
+### Changed
+
+#### 1. ModSecurity Argument Limit
+
+Menetapkan batas argumen ModSecurity:
+
+    SecArgumentsLimit 1000
+
+Rule dasar dengan ID `200007` menolak request ketika jumlah argumen mencapai atau melebihi 1000, dengan status HTTP 400.
+
+#### 2. ModSecurity Response Body Inspection
+
+Konfigurasi response body inspection tetap aktif dengan batas dan MIME type berikut:
+
+    SecResponseBodyAccess On
+    SecResponseBodyMimeType text/plain text/html text/xml application/json
+    SecResponseBodyLimit 1048576
+    SecResponseBodyLimitAction ProcessPartial
+
+#### 3. Script Naming and Operational Workflow
+
+Workflow dokumentasi diperbarui untuk menggunakan nama script yang berlaku saat ini:
+
+    scripts/install-requirements.sh
+    scripts/deploy.sh
+    scripts/create-reverse-proxy.sh
+    scripts/analyze-detection.sh
+
+### Security
+
+- Menambahkan pencatatan indikator `PHP_SESSION_UPLOAD_PROGRESS` untuk membantu investigasi aktivitas terkait PHP upload progress.
+- Menambahkan pencatatan response dengan `Content-Encoding: gzip` untuk mendukung observasi perilaku response upstream.
+- Mempertahankan batas jumlah argumen request untuk mengurangi risiko pemrosesan request dengan jumlah argumen berlebihan.
+- Rule `5001001` dan `5001002` bersifat logging/detection (`pass`), bukan kontrol pemblokiran. Keduanya tidak menggantikan patch aplikasi, hardening PHP, atau kontrol keamanan lain.
+
+### Fixed
+
+- Memperbaiki/menstandarkan analisis domain pada audit log agar menggunakan HTTP Host dari section B, bukan hostname pada section H yang dapat berisi alamat server/backend.
+
+### Documentation
+
+- Memperbarui referensi script instalasi dan analisis detection agar sesuai dengan nama script terkini.
+- Mendokumentasikan fungsi dan batasan rule `5001001` dan `5001002`, termasuk bahwa keduanya hanya mencatat event.
+- Mendokumentasikan lokasi backup konfigurasi awal dan baseline konfigurasi ModSecurity.
+
+---
+
 ## [1.3.0] - 2026-09-17
 
 Release keempat BREBES-WAF.
@@ -1773,6 +1872,7 @@ Struktur repository BREBES-WAF:
 | Version | Release Date | Status | Description |
 |---|---|---|---|
 | `Unreleased` | - | Development | Perubahan yang sedang dikembangkan |
+| `1.4.0` | `2026-10-23` | **Stable** | Installation requirements, detection log analysis, generic detection rules, dan pembaruan baseline ModSecurity |
 | `1.3.0` | `2026-09-17` | **Stable** | Reverse proxy common snippet, reverse proxy configuration generator, dan logging standardization |
 | `1.2.0` | `2026-09-16` | **Stable** | First-time deployment enhancement, configuration validation, response body inspection, dan logging standardization |
 | `1.1.0` | `2026-09-11` | **Stable** | Dependency automation, Ubuntu repository configuration, ModSecurity package detection, dan deployment preparation |
