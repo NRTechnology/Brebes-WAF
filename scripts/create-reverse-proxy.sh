@@ -12,29 +12,94 @@ set -euo pipefail
 # =============================================================================
 
 usage() {
-    echo "Usage:"
-    echo "  $0 <domain> <ssl_certificate> <ssl_certificate_key> <proxy_pass>"
-    echo
-    echo "Example:"
-    echo "  $0 app.example.com \\"
-    echo "     /var/ssl_cert/star.example.com.crt \\"
-    echo "     /var/ssl_cert/star.example.com.key \\"
-    echo "     http://15.0.2.6"
-    exit 1
+    cat <<EOF
+Usage:
+  $0 --domain <DOMAIN> \\
+     --ssl-cert <SSL_CERTIFICATE_PATH> \\
+     --ssl-key <SSL_CERTIFICATE_KEY_PATH> \\
+     --proxy-pass <PROXY_PASS>
+
+Options:
+  --domain      Domain aplikasi, misalnya app.example.com
+  --ssl-cert    Path file sertifikat SSL/TLS
+  --ssl-key     Path file private key SSL/TLS
+  --proxy-pass  URL backend, misalnya http://192.0.2.10:8080
+  -h, --help    Tampilkan bantuan
+
+Example:
+  sudo $0 \\
+    --domain app.example.com \\
+    --ssl-cert /var/ssl_cert/example.com.crt \\
+    --ssl-key /var/ssl_cert/example.com.key \\
+    --proxy-pass http://192.0.2.10:8080
+EOF
 }
 
 # =============================================================================
 # Arguments
 # =============================================================================
 
-if [ "$#" -ne 4 ]; then
-    usage
-fi
+DOMAIN=""
+SSL_CERTIFICATE=""
+SSL_CERTIFICATE_KEY=""
+PROXY_PASS=""
 
-DOMAIN="$1"
-SSL_CERTIFICATE="$2"
-SSL_CERTIFICATE_KEY="$3"
-PROXY_PASS="$4"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --domain)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "[ERROR] Opsi --domain membutuhkan nilai." >&2
+                usage
+                exit 1
+            fi
+            DOMAIN="$2"
+            shift 2
+            ;;
+        --ssl-cert)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "[ERROR] Opsi --ssl-cert membutuhkan nilai." >&2
+                usage
+                exit 1
+            fi
+            SSL_CERTIFICATE="$2"
+            shift 2
+            ;;
+        --ssl-key)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "[ERROR] Opsi --ssl-key membutuhkan nilai." >&2
+                usage
+                exit 1
+            fi
+            SSL_CERTIFICATE_KEY="$2"
+            shift 2
+            ;;
+        --proxy-pass)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "[ERROR] Opsi --proxy-pass membutuhkan nilai." >&2
+                usage
+                exit 1
+            fi
+            PROXY_PASS="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "[ERROR] Opsi tidak dikenal: $1" >&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "${DOMAIN}" || -z "${SSL_CERTIFICATE}" || \
+      -z "${SSL_CERTIFICATE_KEY}" || -z "${PROXY_PASS}" ]]; then
+    echo "[ERROR] Semua opsi berikut wajib diisi: --domain, --ssl-cert, --ssl-key, --proxy-pass." >&2
+    usage
+    exit 1
+fi
 
 NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
 NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
