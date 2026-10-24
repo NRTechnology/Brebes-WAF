@@ -397,33 +397,30 @@ scripts/create-reverse-proxy.sh
 
 digunakan untuk membuat virtual host reverse proxy Nginx secara otomatis.
 
-Parameter:
+Opsi:
 
-```text
-<DOMAIN>
-<SSL_CERTIFICATE_PATH>
-<SSL_CERTIFICATE_KEY_PATH>
-<PROXY_PASS>
-```
+| Opsi | Wajib | Keterangan |
+|---|---|---|
+| `--domain` | Ya | Domain aplikasi, misalnya `app.example.com`. |
+| `--ssl-cert` | Ya | Path file sertifikat SSL/TLS, misalnya `/var/ssl_cert/example.com.crt`. |
+| `--ssl-key` | Ya | Path file private key SSL/TLS, misalnya `/var/ssl_cert/example.com.key`. |
+| `--proxy-pass` | Ya | URL backend aplikasi, misalnya `http://192.0.2.10:8080`. |
+| `-h`, `--help` | Tidak | Menampilkan bantuan penggunaan. |
 
 Usage:
 
 ```bash
 sudo ./scripts/create-reverse-proxy.sh \
-    <DOMAIN> \
-    <SSL_CERTIFICATE_PATH> \
-    <SSL_CERTIFICATE_KEY_PATH> \
-    <PROXY_PASS>
+    --domain app.example.com \
+    --ssl-cert /var/ssl_cert/example.com.crt \
+    --ssl-key /var/ssl_cert/example.com.key \
+    --proxy-pass http://192.0.2.10:8080
 ```
 
-Contoh generic:
+Menampilkan bantuan:
 
 ```bash
-sudo ./scripts/create-reverse-proxy.sh \
-    app.example.com \
-    /var/ssl_cert/example.com.crt \
-    /var/ssl_cert/example.com.key \
-    http://192.0.2.10:8080
+sudo ./scripts/create-reverse-proxy.sh --help
 ```
 
 Script menghasilkan:
