@@ -1,40 +1,116 @@
-**# BREBES-WAF**
+# BREBES-WAF
 
-Web Application Firewall Security Ruleset untuk melindungi aplikasi web menggunakan:
+**Web Application Firewall (WAF) untuk reverse proxy Nginx**
 
-\- Nginx
+BREBES-WAF adalah ruleset dan perangkat otomasi konfigurasi keamanan untuk membantu melindungi aplikasi web yang ditempatkan di belakang reverse proxy Nginx. BREBES-WAF mengintegrasikan ModSecurity v3, OWASP Core Rule Set (CRS), dan aturan khusus BREBES-WAF, disertai skrip untuk persiapan dependency, deployment, pembuatan virtual host reverse proxy, serta analisis detection log.
 
-\- ModSecurity v3
+## About
 
-\- OWASP Core Rule Set (CRS)
+BREBES-WAF dirancang sebagai lapisan pertahanan di depan aplikasi web. Request yang melewati Nginx dapat diperiksa oleh ModSecurity dan ruleset yang dikonfigurasi, sementara log Nginx dan ModSecurity dapat digunakan untuk pemantauan, analisis false positive, dan investigasi insiden.
 
-\- BREBES-WAF Rules
+### Ringkasan Fitur
 
-**---**
+- **Reverse proxy Nginx** — pembuatan virtual host HTTPS dengan konfigurasi proxy bersama.
+- **ModSecurity v3** — engine inspeksi request dan response yang terintegrasi dengan Nginx.
+- **OWASP Core Rule Set (CRS)** — lapisan aturan keamanan umum untuk aplikasi web.
+- **BREBES-WAF Rules** — aturan terkelompok untuk core, upload, webshell, WordPress, malware, generic security, Git, dan kebutuhan lokal.
+- **Otomasi deployment** — skrip untuk persiapan dependency, deployment rules/configuration, serta pembuatan reverse proxy.
+- **Audit dan analisis detection** — dukungan pencatatan audit ModSecurity dan analisis log berdasarkan domain serta tanggal.
+- **Backup dan validasi konfigurasi** — alur deployment mencakup backup serta validasi konfigurasi Nginx sebelum konfigurasi digunakan.
+- **Monitoring dan investigasi** — korelasi Nginx access log, error log, ModSecurity audit log, application log, dan system log.
 
-**## Installation Guide**
+### Arsitektur Singkat
 
-**## Prerequisites**
+```text
+Client
+  |
+  v
+Nginx Reverse Proxy + TLS
+  |
+  v
+ModSecurity v3
+  |
+  +--> OWASP Core Rule Set (CRS)
+  |
+  +--> BREBES-WAF Rules
+  |
+  v
+Backend Web Application
 
-BREBES-WAF menggunakan **\*\*Ubuntu Server 26.04 LTS\*\*** sebagai standar deployment.
+Log:
+Nginx Access/Error Log + ModSecurity Audit Log
+  |
+  v
+Detection Analysis & Incident Investigation
+```
+
+### Komponen Utama
+
+| Komponen | Peran |
+|---|---|
+| Nginx | Terminasi TLS dan reverse proxy ke backend aplikasi |
+| ModSecurity v3 | Engine inspeksi keamanan web |
+| OWASP CRS | Aturan keamanan umum |
+| BREBES-WAF Rules | Aturan tambahan sesuai kategori perlindungan |
+| `install-requirements.sh` | Pemeriksaan dependency dan persiapan/deployment awal |
+| `deploy.sh` | Deployment lanjutan konfigurasi dan rules |
+| `create-reverse-proxy.sh` | Membuat virtual host reverse proxy |
+| `analyze-detection.sh` | Menganalisis ModSecurity audit log berdasarkan domain dan tanggal |
+
+### Platform dan Repository
+
+- **Baseline deployment:** Ubuntu Server 26.04 LTS.
+- **Kompatibilitas yang dicantumkan:** Ubuntu Server 24.04 LTS dan 22.04 LTS, dengan syarat dependency tersedia dan validasi berhasil.
+- **Repository:** <https://github.com/NRTechnology/Brebes-WAF>
+- **Branch stabil:** `main`.
+
+### Batasan Penggunaan
+
+BREBES-WAF merupakan salah satu lapisan keamanan, bukan pengganti secure coding, patch management, autentikasi dan kontrol akses yang kuat, keamanan jaringan, backup, monitoring, maupun incident response. Efektivitas setiap aturan harus divalidasi pada lingkungan target dan diuji terhadap request legitimate untuk mengurangi false positive. Tidak semua aturan melakukan pemblokiran; beberapa aturan memang hanya mencatat indikator untuk kebutuhan monitoring.
+
+---
+
+## Daftar Isi
+
+- [About](#about)
+- [Installation Guide](#installation-guide)
+- [Prerequisites](#prerequisites)
+- [Nginx Configuration](#7-nginx-configuration)
+- [ModSecurity](#8-modsecurity)
+- [OWASP Core Rule Set](#9-owasp-core-rule-set)
+- [Deployment](#16-deployment-after-first-installation)
+- [Detection Log Analysis](#19-detection-log-analysis)
+- [BREBES-WAF Rules](#21-brebes-waf-rules)
+- [Testing](#24-testing)
+- [Repository Structure](#26-repository-structure)
+- [Security Philosophy](#29-security-philosophy)
+- [License](#license)
+
+---
+
+## Installation Guide
+
+## Prerequisites
+
+BREBES-WAF menggunakan ****Ubuntu Server 26.04 LTS**** sebagai standar deployment.
 
 Persyaratan:
 
-\- Ubuntu Server 26.04 LTS
+- Ubuntu Server 26.04 LTS
 
-\- Root atau user dengan akses `sudo`
+- Root atau user dengan akses `sudo`
 
-\- Internet Connection
+- Internet Connection
 
-\- Git
+- Git
 
-**### Supported Ubuntu Version**
+### Supported Ubuntu Version
 
 | Ubuntu Version | Status |
 
 |---|---|
 
-| Ubuntu Server 26.04 LTS | **\*\*Standard\*\*** |
+| Ubuntu Server 26.04 LTS | ****Standard**** |
 
 | Ubuntu Server 24.04 LTS | Compatibility |
 
@@ -44,11 +120,11 @@ Ubuntu Server 26.04 LTS digunakan sebagai baseline utama untuk pengembangan, tes
 
 Versi Ubuntu lainnya dapat digunakan apabila seluruh dependency tersedia dan proses deployment berhasil melalui validation.
 
-**---**
+---
 
-**## 1. Install Ubuntu Server 26.04 LTS**
+## 1. Install Ubuntu Server 26.04 LTS
 
-Install **\*\*Ubuntu Server 26.04 LTS\*\*** pada server yang akan digunakan sebagai BREBES-WAF.
+Install ****Ubuntu Server 26.04 LTS**** pada server yang akan digunakan sebagai BREBES-WAF.
 
 Setelah instalasi selesai, login menggunakan user dengan akses `sudo`.
 
@@ -62,9 +138,9 @@ sudo apt upgrade -y
 
 ```
 
-**---**
+---
 
-**## 2. Install Git**
+## 2. Install Git
 
 ```bash
 
@@ -74,9 +150,9 @@ git --version
 
 ```
 
-**---**
+---
 
-**## 3. Change to the /opt Directory**
+## 3. Change to the /opt Directory
 
 ```bash
 
@@ -84,9 +160,9 @@ cd /opt
 
 ```
 
-**---**
+---
 
-**## 4. Clone the Repository**
+## 4. Clone the Repository
 
 Clone branch `main` yang merupakan stable branch:
 
@@ -114,9 +190,9 @@ main
 
 ```
 
-**---**
+---
 
-**## 5. Check and Prepare Dependencies**
+## 5. Check and Prepare Dependencies
 
 BREBES-WAF menyediakan script untuk melakukan pemeriksaan dan persiapan dependency.
 
@@ -130,33 +206,33 @@ sudo ./scripts/install-requirements.sh
 
 Script melakukan pemeriksaan terhadap:
 
-\- Ubuntu version
+- Ubuntu version
 
-\- Ubuntu repository
+- Ubuntu repository
 
-\- Nginx
+- Nginx
 
-\- ModSecurity v3
+- ModSecurity v3
 
-\- Nginx ModSecurity Connector
+- Nginx ModSecurity Connector
 
-\- Nginx NDK
+- Nginx NDK
 
-\- OWASP CRS
+- OWASP CRS
 
-\- Git
+- Git
 
-\- curl
+- curl
 
-\- CA certificates
+- CA certificates
 
-\- ModSecurity configuration
+- ModSecurity configuration
 
-\- Nginx configuration
+- Nginx configuration
 
-**---**
+---
 
-**## 6. First-Time Deployment**
+## 6. First-Time Deployment
 
 Untuk instalasi pertama BREBES-WAF:
 
@@ -174,45 +250,45 @@ Script `install-requirements.sh` digunakan untuk persiapan dan deployment awal B
 
 Proses mencakup:
 
-\- Pemeriksaan environment
+- Pemeriksaan environment
 
-\- Pemeriksaan dependency
+- Pemeriksaan dependency
 
-\- Pemeriksaan konfigurasi Nginx
+- Pemeriksaan konfigurasi Nginx
 
-\- Pemeriksaan ModSecurity
+- Pemeriksaan ModSecurity
 
-\- Pemeriksaan OWASP CRS
+- Pemeriksaan OWASP CRS
 
-\- Persiapan `crs-load.conf`
+- Persiapan `crs-load.conf`
 
-\- Pembuatan konfigurasi ModSecurity
+- Pembuatan konfigurasi ModSecurity
 
-\- Pembuatan `/etc/nginx/modsecurity_includes.conf`
+- Pembuatan `/etc/nginx/modsecurity_includes.conf`
 
-\- Automatic rule discovery
+- Automatic rule discovery
 
-\- Pemeriksaan `log_format reverser`
+- Pemeriksaan `log_format reverser`
 
-\- Pemeriksaan global Nginx access log
+- Pemeriksaan global Nginx access log
 
-\- Pemeriksaan `modsecurity on`
+- Pemeriksaan `modsecurity on`
 
-\- Pemeriksaan `modsecurity_rules_file`
+- Pemeriksaan `modsecurity_rules_file`
 
-\- Validasi jumlah BREBES-WAF rules
+- Validasi jumlah BREBES-WAF rules
 
-\- Validasi konfigurasi Nginx
+- Validasi konfigurasi Nginx
 
-\- Backup konfigurasi
+- Backup konfigurasi
 
-\- Deployment configuration
+- Deployment configuration
 
-\- Verification setelah deployment
+- Verification setelah deployment
 
-**---**
+---
 
-**## 7. Nginx Configuration**
+## 7. Nginx Configuration
 
 Konfigurasi utama:
 
@@ -426,11 +502,11 @@ Reload Nginx
 Verify
 ```
 
-**---**
+---
 
-**## 8. ModSecurity**
+## 8. ModSecurity
 
-BREBES-WAF menggunakan **\*\*ModSecurity v3\*\***.
+BREBES-WAF menggunakan ****ModSecurity v3****.
 
 Konfigurasi utama:
 
@@ -458,9 +534,9 @@ modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;
 
 ```
 
-**---**
+---
 
-**## 9. OWASP Core Rule Set**
+## 9. OWASP Core Rule Set
 
 BREBES-WAF menggunakan OWASP Core Rule Set sebagai salah satu security layer.
 
@@ -496,7 +572,7 @@ rules/
 
 ```
 
-Deployment script secara otomatis mencari file `\*.conf` pada:
+Deployment script secara otomatis mencari file `*.conf` pada:
 
 ```text
 
@@ -504,9 +580,9 @@ Deployment script secara otomatis mencari file `\*.conf` pada:
 
 ```
 
-**---**
+---
 
-**## 10. ModSecurity Response Body Inspection**
+## 10. ModSecurity Response Body Inspection
 
 BREBES-WAF mengaktifkan response body inspection:
 
@@ -542,9 +618,9 @@ SecResponseBodyLimitAction ProcessPartial
 
 Konfigurasi ini membantu pemeriksaan security event pada response aplikasi dengan tetap mempertimbangkan penggunaan resource.
 
-**---**
+---
 
-**## ModSecurity Baseline
+## ModSecurity Baseline
 
 Konfigurasi dasar installer menggunakan nilai berikut:
 
@@ -567,7 +643,7 @@ Installer juga memasang rule dasar `200007` untuk menolak request dengan jumlah 
 
 ---
 
-## 11. ModSecurity Audit Logging**
+## 11. ModSecurity Audit Logging
 
 ```apache
 
@@ -585,9 +661,9 @@ SecAuditLogStorageDir /var/log/nginx/modsecurity/
 
 Audit log digunakan untuk detection analysis, incident investigation, false positive analysis, rule tuning, security monitoring, dan incident response.
 
-**---**
+---
 
-**## 12. Create the ModSecurity Audit Log Directory**
+## 12. Create the ModSecurity Audit Log Directory
 
 ```bash
 
@@ -601,9 +677,9 @@ sudo chmod 750 /var/log/nginx/modsecurity
 
 First-time deployment script dapat melakukan persiapan directory sesuai konfigurasi deployment.
 
-**---**
+---
 
-**## 13. Verify the Installation**
+## 13. Verify the Installation
 
 ```bash
 
@@ -623,9 +699,9 @@ test is successful
 
 ```
 
-**---**
+---
 
-**## 14. Verify Effective Nginx Configuration**
+## 14. Verify Effective Nginx Configuration
 
 ```bash
 
@@ -655,9 +731,9 @@ modsecurity_rules_file /etc/nginx/modsecurity_includes.conf;
 
 ```
 
-**---**
+---
 
-**## 15. Verify ModSecurity Include**
+## 15. Verify ModSecurity Include
 
 ```bash
 
@@ -695,9 +771,9 @@ Include /opt/Brebes-WAF/rules/60-git/6001001-git-directory.conf
 
 ```
 
-**---**
+---
 
-**## 16. Deployment After First Installation**
+## 16. Deployment After First Installation
 
 Setelah first-time deployment berhasil, deployment berikutnya menggunakan:
 
@@ -715,7 +791,7 @@ sudo chmod +x scripts/deploy.sh
 
 ```
 
-**### Deployment Workflow**
+### Deployment Workflow
 
 First-time deployment:
 
@@ -817,9 +893,9 @@ Verify
 
 ```
 
-**---**
+---
 
-**## 17. Check Recent Detected Activities**
+## 17. Check Recent Detected Activities
 
 Audit log:
 
@@ -853,9 +929,9 @@ strings "$(find /var/log/nginx/modsecurity -type f | sort | tail -1)"
 
 ```
 
-**---**
+---
 
-**## 18. Search BREBES-WAF Detection**
+## 18. Search BREBES-WAF Detection
 
 ```bash
 
@@ -871,7 +947,7 @@ find /var/log/nginx/modsecurity -type f -exec strings {} \\; | grep "BREBES-WAF"
 
 ```
 
-**---**
+---
 
 **## 19. Detection Log Analysis
 
@@ -901,7 +977,7 @@ Catatan: rule dasar ModSecurity seperti `200007` tidak otomatis dihitung sebagai
 
 ---
 
-## 20. Backup and Rollback**
+## 20. Backup and Rollback
 
 Generated configuration:
 
@@ -959,9 +1035,9 @@ Verify
 
 Apabila validasi atau reload gagal, konfigurasi sebelumnya dapat dipulihkan menggunakan mekanisme rollback pada deployment script.
 
-**---**
+---
 
-**## 21. BREBES-WAF Rules**
+## 21. BREBES-WAF Rules
 
 | Range | Category | Description |
 
@@ -983,7 +1059,7 @@ Apabila validasi atau reload gagal, konfigurasi sebelumnya dapat dipulihkan meng
 
 | `9001000-9001999` | Local | Local/deployment-specific rules |
 
-**---**
+---
 
 **### Generic Rules saat ini
 
@@ -996,7 +1072,7 @@ Rule `5001002` bukan pengganti patch keamanan PHP. Request juga dapat ditolak le
 
 ---
 
-## 22. Git Repository Protection**
+## 22. Git Repository Protection
 
 Perlindungan mencakup:
 
@@ -1026,27 +1102,27 @@ rules/60-git/
 
 ```
 
-**---**
+---
 
-**## 23. Upload Protection**
+## 23. Upload Protection
 
 BREBES-WAF menyediakan upload protection untuk mengurangi risiko:
 
-\- Malicious file upload
+- Malicious file upload
 
-\- Executable file upload
+- Executable file upload
 
-\- Webshell upload
+- Webshell upload
 
-\- Server-side script upload
+- Server-side script upload
 
-\- Penyalahgunaan upload directory
+- Penyalahgunaan upload directory
 
 Allowed extensions dikontrol melalui BREBES-WAF upload rules.
 
-**---**
+---
 
-**## 24. Testing**
+## 24. Testing
 
 Setiap perubahan rule harus melalui:
 
@@ -1092,7 +1168,7 @@ Production Verification
 
 ```
 
-**### Positive Test**
+### Positive Test
 
 Request berbahaya yang seharusnya diblokir:
 
@@ -1102,7 +1178,7 @@ HTTP 403
 
 ```
 
-**### Negative Test**
+### Negative Test
 
 Request legitimate harus tetap dapat diproses:
 
@@ -1114,13 +1190,13 @@ HTTP 200
 
 atau response normal aplikasi.
 
-**### False Positive Analysis**
+### False Positive Analysis
 
 Setiap rule baru harus diuji terhadap request legitimate untuk memastikan rule tidak terlalu agresif.
 
-**---**
+---
 
-**## 25. Operational Logging**
+## 25. Operational Logging
 
 Analisis keamanan sebaiknya dilakukan dengan mengkorelasikan:
 
@@ -1150,9 +1226,9 @@ Timestamp filesystem tidak boleh digunakan sebagai satu-satunya dasar untuk mene
 
 Metadata filesystem dapat berubah atau dimanipulasi.
 
-**---**
+---
 
-**## 26. Repository Structure**
+## 26. Repository Structure
 
 ```text
 
@@ -1214,7 +1290,7 @@ BREBES-WAF/
 
 ```
 
-**---**
+---
 
 **## 27. Recommended Deployment
 
@@ -1252,7 +1328,7 @@ Script pembuatan virtual host menjalankan `nginx -t`, tetapi tidak melakukan rel
 
 ---
 
-## 28. Subsequent Deployment**
+## 28. Subsequent Deployment
 
 Setelah BREBES-WAF terpasang:
 
@@ -1266,59 +1342,59 @@ sudo ./scripts/deploy.sh
 
 ```
 
-**---**
+---
 
-**## 29. Security Philosophy**
+## 29. Security Philosophy
 
 BREBES-WAF dikembangkan berdasarkan prinsip:
 
-\- Defense in Depth
+- Defense in Depth
 
-\- Least Privilege
+- Least Privilege
 
-\- Secure by Default
+- Secure by Default
 
-\- Fail Safely
+- Fail Safely
 
-\- Explicit Allow
+- Explicit Allow
 
-\- Minimal Exposure
+- Minimal Exposure
 
-\- Continuous Monitoring
+- Continuous Monitoring
 
-\- Continuous Improvement
+- Continuous Improvement
 
 BREBES-WAF merupakan salah satu lapisan keamanan dan tidak menggantikan:
 
-\- Secure coding
+- Secure coding
 
-\- Patch management
+- Patch management
 
-\- Authentication security
+- Authentication security
 
-\- Access control
+- Access control
 
-\- Network security
+- Network security
 
-\- Endpoint security
+- Endpoint security
 
-\- Backup
+- Backup
 
-\- Monitoring
+- Monitoring
 
-\- Incident response
+- Incident response
 
-**---**
+---
 
-**## License**
+## License
 
 Informasi lisensi BREBES-WAF mengikuti ketentuan lisensi yang ditetapkan pada repository project.
 
-**---**
+---
 
-**\*\*BREBES-WAF\*\***
+****BREBES-WAF****
 
-**\*\*Brebes CSIRT\*\***
+****Brebes CSIRT****
 
 Web Application Firewall Security Ruleset
 
