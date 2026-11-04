@@ -12,7 +12,47 @@ Perubahan yang sedang dikembangkan dan belum masuk ke release resmi.
 
 ### Added
 
-Belum ada.
+#### 1. False-Positive Exclusion Management
+
+Menambahkan script:
+
+    scripts/add-exclusion.sh
+
+Script digunakan untuk membuat pengecualian rule ModSecurity secara terarah ketika request legitimate terdeteksi sebagai false positive.
+
+Parameter utama:
+
+    --url
+    --method
+    --rule-id
+    --target
+
+Parameter opsional:
+
+    --name
+    --description
+    --dry-run
+    --force
+    --help
+
+Fungsi utama:
+
+- Mengambil host dan URI path dari URL yang diberikan.
+- Membatasi exclusion berdasarkan host, metode HTTP, URI path, source Rule ID, dan target.
+- Menentukan custom Rule ID berikutnya berdasarkan registry.
+- Memeriksa benturan Rule ID terhadap rule yang terdeteksi pada direktori rules BREBES-WAF dan direktori OWASP CRS yang dikonfigurasi.
+- Membuat satu file konfigurasi exclusion untuk satu target.
+- Mendaftarkan custom Rule ID pada:
+
+      rules/99-custom-exclusions/RULE-ID.txt
+
+File exclusion disimpan pada:
+
+    rules/99-custom-exclusions/
+
+Opsi `--dry-run` menampilkan ringkasan dan konfigurasi yang akan dibuat tanpa mengubah file atau registry. Setelah hasilnya diperiksa, pembuatan exclusion memerlukan konfirmasi, kecuali opsi `--force` digunakan.
+
+Script tidak melakukan validasi konfigurasi Nginx/ModSecurity maupun reload Nginx. Setelah exclusion dibuat, deployment tetap dilakukan menggunakan `scripts/deploy.sh`.
 
 ### Changed
 
@@ -36,7 +76,8 @@ Belum ada.
 
 ### Documentation
 
-Belum ada.
+- Menambahkan dokumentasi penggunaan `scripts/add-exclusion.sh`, termasuk simulasi `--dry-run`, pembuatan exclusion, registry custom Rule ID, deployment, dan verifikasi hasil.
+- Mendokumentasikan prinsip pembatasan exclusion agar hanya berlaku pada host, metode HTTP, URI path, source Rule ID, dan target yang ditentukan.
 
 ---
 
