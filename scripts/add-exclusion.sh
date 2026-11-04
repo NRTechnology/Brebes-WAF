@@ -4,7 +4,7 @@
 # Create one narrowly-scoped ModSecurity target exclusion for BREBES-WAF.
 #
 # Usage:
-#   ./add-exclusion.sh --url https://example.go.id/path?id=1 \
+#   ./add-exclusion.sh --url https://app.example.com/path?id=1 \
 #       --method POST --rule-id 933210 --target 'ARGS:parameter' \
 #       --description "False positive description"
 #
@@ -12,7 +12,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2"
 
 # Resolve BREBES-WAF root from this script location:
 # /opt/Brebes-WAF/scripts/add-exclusion.sh -> /opt/Brebes-WAF
@@ -66,12 +66,12 @@ Environment:
   CUSTOM_ID_START        First candidate custom ID (default: 9900001)
 
 Example:
-  ./add-exclusion.sh \
-    --url 'https://sipetarung.brebeskab.go.id/user/pengajuan_process?id=1802' \
+  ./scripts/add-exclusion.sh \
+    --url 'https://app.example.com/user/process?id=123' \
     --method POST \
     --rule-id 933210 \
-    --target 'ARGS:uttp_type' \
-    --description 'False positive pada pilihan jenis UTTP'
+    --target 'ARGS:document_type' \
+    --description 'False positive pada parameter document_type'
 
 This script creates a custom exclusion only. It does not run nginx -t or reload Nginx.
 Use deploy.sh to validate and deploy the resulting configuration.
