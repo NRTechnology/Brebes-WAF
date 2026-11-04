@@ -1,3 +1,8 @@
 
 # Python virtual environments
 samples/php2shell/.venv/
+
+# Local custom exclusions - not tracked by Git
+/rules/99-custom-exclusions/*
+!/rules/99-custom-exclusions/README.md
+!/rules/99-custom-exclusions/RULE-ID.txt
