@@ -12,8 +12,12 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-SCRIPT_VERSION="1.0.0"
-BREBES_WAF_HOME="${BREBES_WAF_HOME:-/opt/Brebes-WAF}"
+SCRIPT_VERSION="1.0.1"
+
+# Resolve BREBES-WAF root from this script location:
+# /opt/Brebes-WAF/scripts/add-exclusion.sh -> /opt/Brebes-WAF
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BREBES_WAF_HOME="${BREBES_WAF_HOME:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 RULES_DIR="${BREBES_WAF_HOME}/rules"
 CUSTOM_DIR="${RULES_DIR}/99-custom-exclusions"
 REGISTRY="${CUSTOM_DIR}/RULE-ID.txt"
@@ -58,7 +62,7 @@ Optional:
   -h, --help             Show this help
 
 Environment:
-  BREBES_WAF_HOME        BREBES-WAF directory (default: /opt/Brebes-WAF)
+  BREBES_WAF_HOME        Override BREBES-WAF root (default: parent of scripts/)
   CUSTOM_ID_START        First candidate custom ID (default: 9900001)
 
 Example:
