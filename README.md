@@ -58,6 +58,7 @@ Detection Analysis & Incident Investigation
 | `create-reverse-proxy.sh` | Membuat virtual host reverse proxy |
 | `analyze-detection.sh` | Menganalisis ModSecurity audit log berdasarkan domain dan tanggal |
 | `add-exclusion.sh` | Membuat pengecualian rule ModSecurity untuk menangani false positive secara spesifik |
+| `remove-exclusions.sh` | Menghapus pengecualian berdasarkan Custom Rule ID serta memperbarui registry dengan mekanisme backup |
 
 ### Platform dan Repository
 
@@ -978,23 +979,39 @@ Catatan: rule dasar ModSecurity seperti `200007` tidak otomatis dihitung sebagai
 
 ### Managing False-Positive Exclusions
 
-Gunakan `scripts/add-exclusion.sh` untuk membuat pengecualian terhadap rule ModSecurity yang menghasilkan false positive pada request legitimate. Pengecualian dibuat secara spesifik agar cakupan pengurangan inspeksi tetap terbatas.
+BREBES-WAF menyediakan dua script untuk mengelola pengecualian false positive:
+
+- `scripts/add-exclusion.sh` — membuat custom exclusion berdasarkan host, endpoint, metode HTTP, source Rule ID, dan target parameter.
+- `scripts/remove-exclusions.sh` — menghapus custom exclusion berdasarkan Custom Rule ID, termasuk memperbarui registry.
+
+Pengecualian harus dibuat secara spesifik agar cakupan pengurangan inspeksi tetap terbatas.
+
+#### A. Membuat exclusion dengan `add-exclusion.sh`
 
 Script mendukung parameter berikut:
 
 | Opsi | Wajib | Keterangan |
 |---|---|---|
-| `--url` | Ya | URL aplikasi yang mengalami false positive. Host dan URI path diambil dari URL; query string tidak digunakan sebagai bagian pencocokan endpoint. |
-| `--method` | Ya | Metode HTTP, misalnya `GET` atau `POST`. |
+| `--url` | Ya | URL aplikasi yang mengalami false positive. Host dan URI path diambil dari URL. Query string dan fragment tidak digunakan sebagai bagian pencocokan endpoint. |
+| `--method` | Ya | Satu atau beberapa metode HTTP, dipisahkan koma. Contoh: `POST` atau `GET,POST`. |
 | `--rule-id` | Ya | Source Rule ID yang menghasilkan deteksi, misalnya Rule ID OWASP CRS. |
-| `--target` | Ya | Target parameter yang dikecualikan, misalnya `ARGS:parameter_name`. |
+| `--target` | Tidak | Satu atau beberapa target parameter, dipisahkan koma. Contoh: `ARGS:field1,ARGS:field2`. Jika tidak diberikan, seluruh source Rule ID dikecualikan dalam scope host, metode, dan endpoint yang ditentukan. |
 | `--name` | Tidak | Nama aplikasi untuk keterangan exclusion. |
 | `--description` | Tidak | Penjelasan alasan pembuatan exclusion. |
 | `--dry-run` | Tidak | Menampilkan ringkasan dan konfigurasi yang akan dibuat tanpa mengubah file maupun registry. |
 | `--force` | Tidak | Menjalankan pembuatan tanpa meminta konfirmasi interaktif. Gunakan dengan hati-hati. |
 | `-h`, `--help` | Tidak | Menampilkan bantuan penggunaan. |
 
-#### Workflow
+**Catatan mengenai cakupan exclusion:**
+
+- `--method` menerima daftar metode HTTP yang dipisahkan koma. Metode dinormalisasi ke huruf kapital.
+- `--target` menerima daftar target yang dipisahkan koma.
+- Jika `--target` dihilangkan, script membuat pengecualian seluruh source Rule ID pada kombinasi host, metode, dan URI path tersebut. Ini memiliki dampak lebih luas daripada pengecualian target tertentu.
+- Jika `--target` diberikan, hanya target yang disebutkan yang dikecualikan dari source Rule ID tersebut.
+- Query string pada URL tidak menjadi bagian pencocokan endpoint. Exclusion berlaku pada URI path yang sama, termasuk request dengan query string berbeda.
+- Rule yang dihasilkan menyertakan pesan dan tag `BREBES-WAF/EXCLUSION` untuk membantu identifikasi event exclusion pada logging ModSecurity. Ketersediaan event pada log tetap bergantung pada konfigurasi audit/error logging yang aktif.
+
+#### Workflow pembuatan exclusion
 
 **1. Analisis detection terlebih dahulu**
 
@@ -1014,7 +1031,30 @@ sudo ./scripts/add-exclusion.sh \
     --dry-run
 ```
 
-Periksa ringkasan, terutama host, URI path, metode HTTP, source Rule ID, target, custom Rule ID, dan lokasi file output.
+Contoh beberapa metode HTTP dan beberapa target:
+
+```bash
+sudo ./scripts/add-exclusion.sh \
+    --url 'https://app.example.com/user/process' \
+    --method GET,POST \
+    --rule-id 933210 \
+    --target 'ARGS:field1,ARGS:field2' \
+    --description 'False positive pada parameter aplikasi' \
+    --dry-run
+```
+
+Contoh pengecualian seluruh source Rule ID pada scope endpoint (tanpa `--target`):
+
+```bash
+sudo ./scripts/add-exclusion.sh \
+    --url 'https://app.example.com/user/process' \
+    --method POST \
+    --rule-id 933210 \
+    --description 'False positive terkonfirmasi pada endpoint' \
+    --dry-run
+```
+
+Penggunaan tanpa `--target` harus dipertimbangkan lebih hati-hati karena seluruh target pada source Rule ID tersebut tidak lagi diperiksa dalam scope yang cocok.
 
 **3. Buat exclusion**
 
@@ -1029,7 +1069,7 @@ sudo ./scripts/add-exclusion.sh \
     --description 'False positive pada parameter document_type'
 ```
 
-Script menampilkan konfigurasi yang akan dibuat dan meminta konfirmasi. Setelah disetujui, script membuat file exclusion di `rules/99-custom-exclusions/` dan mendaftarkan custom Rule ID pada `RULE-ID.txt`.
+Script menampilkan konfigurasi yang akan dibuat dan meminta konfirmasi. Setelah disetujui, script membuat file exclusion di `rules/99-custom-exclusions/` dan mendaftarkan Custom Rule ID pada `RULE-ID.txt`.
 
 Untuk penggunaan non-interaktif, opsi `--force` dapat digunakan setelah seluruh parameter dan hasil simulasi dipastikan benar.
 
@@ -1040,7 +1080,7 @@ ls -lah rules/99-custom-exclusions/
 cat rules/99-custom-exclusions/RULE-ID.txt
 ```
 
-Pastikan file exclusion dan custom Rule ID tercatat dengan benar.
+Pastikan file exclusion dan Custom Rule ID tercatat dengan benar.
 
 **5. Deploy dan validasi**
 
@@ -1054,6 +1094,73 @@ Deployment membangun ulang file `/etc/nginx/modsecurity_includes.conf`, memvalid
 
 Lakukan pengujian request legitimate yang sebelumnya terkena false positive. Periksa kembali ModSecurity audit log dan Nginx access/error log untuk memastikan request berhasil serta tidak ada dampak yang tidak diinginkan.
 
+#### B. Menghapus exclusion dengan `remove-exclusions.sh`
+
+Gunakan `scripts/remove-exclusions.sh` untuk menghapus satu exclusion berdasarkan Custom Rule ID. Script menghapus file `.conf` yang cocok dan menghapus ID terkait dari `RULE-ID.txt`.
+
+Opsi yang tersedia:
+
+| Opsi | Wajib | Keterangan |
+|---|---|---|
+| `--rule-id` | Ya | Custom Rule ID yang akan dihapus, misalnya `9900001`. |
+| `--dry-run` | Tidak | Menampilkan file dan registry yang akan diubah tanpa melakukan penghapusan. |
+| `--force` | Tidak | Menjalankan penghapusan tanpa meminta konfirmasi interaktif. Gunakan dengan hati-hati. |
+| `-h`, `--help` | Tidak | Menampilkan bantuan penggunaan. |
+
+**1. Simulasikan penghapusan**
+
+```bash
+sudo ./scripts/remove-exclusions.sh --rule-id 9900001 --dry-run
+```
+
+Periksa Custom Rule ID dan file yang akan dihapus. Pastikan ID tersebut memang exclusion yang ingin dinonaktifkan.
+
+**2. Hapus exclusion**
+
+```bash
+sudo ./scripts/remove-exclusions.sh --rule-id 9900001
+```
+
+Script meminta konfirmasi sebelum menghapus. Setelah disetujui, script:
+
+- Memastikan Custom Rule ID tercatat pada `RULE-ID.txt`.
+- Memastikan file exclusion yang sesuai ditemukan secara unik.
+- Membuat backup file exclusion dan registry.
+- Menghapus file exclusion.
+- Memperbarui registry secara atomik.
+- Melakukan verifikasi hasil dan menyediakan mekanisme rollback jika pembaruan gagal.
+
+Backup penghapusan disimpan di:
+
+```text
+/opt/Brebes-WAF/backup/remove-exclusions/<timestamp>-<rule-id>/
+```
+
+**3. Periksa hasil penghapusan**
+
+```bash
+grep -n '9900001' rules/99-custom-exclusions/RULE-ID.txt
+find rules/99-custom-exclusions/ -maxdepth 1 -type f -name '9900001-*.conf' -print
+```
+
+Kedua perintah seharusnya tidak menghasilkan output untuk ID yang sudah dihapus.
+
+**4. Deploy ulang konfigurasi**
+
+Penghapusan file dan registry di repository belum otomatis mengubah konfigurasi ModSecurity yang sedang digunakan Nginx. Jalankan:
+
+```bash
+sudo ./scripts/deploy.sh
+```
+
+Pastikan `nginx -t` berhasil dan deployment melakukan reload. Kemudian verifikasi:
+
+```bash
+grep -n '9900001' /etc/nginx/modsecurity_includes.conf
+```
+
+Pastikan Custom Rule ID yang dihapus tidak lagi tercantum dalam konfigurasi include.
+
 #### Lokasi dan pengelolaan file
 
 ```text
@@ -1064,27 +1171,31 @@ rules/
     └── <custom-rule-id>-<application>-<endpoint>.conf
 ```
 
-- `RULE-ID.txt` berisi daftar custom Rule ID yang digunakan oleh exclusion; file ini bukan daftar seluruh Rule ID OWASP CRS atau BREBES-WAF.
-- Setiap file exclusion dibuat untuk satu host, satu metode HTTP, satu URI path, satu source Rule ID, dan satu target.
+- `RULE-ID.txt` berisi daftar Custom Rule ID yang digunakan oleh exclusion; file ini bukan daftar seluruh Rule ID OWASP CRS atau BREBES-WAF.
+- Setiap file exclusion memiliki satu Custom Rule ID dan satu source Rule ID. Scope-nya dapat mencakup satu atau beberapa metode HTTP dan, jika ditentukan, satu atau beberapa target.
 - Custom Rule ID dipilih oleh script berdasarkan registry dan pemeriksaan benturan ID yang dilakukannya.
 - Deployment memasukkan file `.conf` di direktori `rules/99-custom-exclusions/` ke konfigurasi ModSecurity.
-- Simpan dan kelola file exclusion sesuai kebijakan repository dan `.gitignore` yang digunakan pada instalasi. Jangan menghapus file exclusion lokal saat memperbarui repository.
+- `add-exclusion.sh` dan `remove-exclusions.sh` mengelola file exclusion serta registry. Perubahan baru diterapkan ke konfigurasi aktif setelah `deploy.sh` berhasil.
+- Backup penghapusan disimpan di direktori `backup/remove-exclusions/`.
+- Simpan dan kelola file exclusion sesuai kebijakan repository dan `.gitignore` yang digunakan pada instalasi. Jangan menghapus file exclusion lokal saat memperbarui repository tanpa meninjau dampaknya.
 
 #### Prinsip keamanan
 
 - Buat exclusion hanya setelah false positive dikonfirmasi melalui audit log dan konteks request aplikasi.
 - Pilih source Rule ID yang benar-benar menghasilkan deteksi, bukan sekadar rule evaluasi akhir seperti `949110`.
-- Batasi exclusion pada target parameter dan endpoint yang diperlukan.
+- Utamakan pengecualian target tertentu. Penggunaan `--target` yang dihilangkan menonaktifkan pemeriksaan seluruh source Rule ID pada scope host, metode, dan endpoint yang cocok.
+- Batasi exclusion pada host, metode, dan endpoint yang diperlukan.
 - Exclusion terhadap suatu target berarti target tersebut tidak diperiksa oleh source Rule ID yang ditentukan pada scope tersebut; rule lain tetap dapat memeriksa request.
-- Jangan mengecualikan seluruh rule, seluruh parameter, atau seluruh domain hanya untuk mengatasi satu false positive.
 - `--dry-run` hanya menampilkan rencana perubahan. Validasi sintaks ModSecurity dilakukan pada tahap deployment melalui `nginx -t`.
 - Setelah deployment, verifikasi dengan request aktual. Keberhasilan `nginx -t` saja belum membuktikan bahwa exclusion bekerja sesuai harapan.
+- Saat menghapus exclusion, jalankan `deploy.sh` agar konfigurasi aktif ikut diperbarui.
 - Catat alasan, bukti audit log, waktu perubahan, dan hasil verifikasi untuk kebutuhan audit serta pemeliharaan.
 
 Untuk melihat seluruh opsi:
 
 ```bash
 sudo ./scripts/add-exclusion.sh --help
+sudo ./scripts/remove-exclusions.sh --help
 ```
 
 ---
@@ -1394,6 +1505,7 @@ BREBES-WAF/
 
 ├── scripts/
 │   ├── add-exclusion.sh
+│   ├── remove-exclusions.sh
 │   ├── analyze-detection.sh
 │   ├── create-reverse-proxy.sh
 │   ├── deploy.sh
