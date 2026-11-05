@@ -25,10 +25,10 @@ Parameter utama:
     --url
     --method
     --rule-id
-    --target
 
 Parameter opsional:
 
+    --target
     --name
     --description
     --dry-run
@@ -38,25 +38,95 @@ Parameter opsional:
 Fungsi utama:
 
 - Mengambil host dan URI path dari URL yang diberikan.
-- Membatasi exclusion berdasarkan host, metode HTTP, URI path, source Rule ID, dan target.
-- Menentukan custom Rule ID berikutnya berdasarkan registry.
-- Memeriksa benturan Rule ID terhadap rule yang terdeteksi pada direktori rules BREBES-WAF dan direktori OWASP CRS yang dikonfigurasi.
-- Membuat satu file konfigurasi exclusion untuk satu target.
+- Membatasi exclusion berdasarkan host, metode HTTP, URI path, dan source Rule ID.
+- Mendukung satu atau beberapa metode HTTP yang dipisahkan koma, misalnya `GET,POST`.
+- Mendukung satu atau beberapa target yang dipisahkan koma, misalnya `ARGS:field1,ARGS:field2`.
+- Jika `--target` tidak diberikan, membuat exclusion terhadap seluruh source Rule ID pada scope host, metode HTTP, dan URI path yang ditentukan.
+- Menentukan custom Rule ID berikutnya berdasarkan registry dan pemeriksaan benturan Rule ID.
+- Membuat file konfigurasi exclusion pada:
+
+      rules/99-custom-exclusions/
+
 - Mendaftarkan custom Rule ID pada:
 
       rules/99-custom-exclusions/RULE-ID.txt
 
-File exclusion disimpan pada:
-
-    rules/99-custom-exclusions/
+Rule exclusion yang dihasilkan menyertakan pesan dan tag `BREBES-WAF/EXCLUSION` untuk membantu identifikasi event exclusion pada logging ModSecurity. Ketersediaan event pada log bergantung pada konfigurasi audit/error logging yang aktif.
 
 Opsi `--dry-run` menampilkan ringkasan dan konfigurasi yang akan dibuat tanpa mengubah file atau registry. Setelah hasilnya diperiksa, pembuatan exclusion memerlukan konfirmasi, kecuali opsi `--force` digunakan.
 
 Script tidak melakukan validasi konfigurasi Nginx/ModSecurity maupun reload Nginx. Setelah exclusion dibuat, deployment tetap dilakukan menggunakan `scripts/deploy.sh`.
 
+#### 2. False-Positive Exclusion Removal
+
+Menambahkan script:
+
+    scripts/remove-exclusions.sh
+
+Script digunakan untuk menghapus custom exclusion berdasarkan Custom Rule ID.
+
+Fungsi utama:
+
+- Memvalidasi bahwa Custom Rule ID terdaftar pada `RULE-ID.txt`.
+- Memastikan file exclusion yang sesuai ditemukan secara unik.
+- Mendukung simulasi penghapusan melalui opsi `--dry-run`.
+- Membuat backup file exclusion dan registry sebelum penghapusan.
+- Menghapus file exclusion yang dipilih.
+- Memperbarui `RULE-ID.txt` secara atomik.
+- Melakukan verifikasi hasil dan menyediakan mekanisme rollback apabila pembaruan gagal.
+- Menyimpan backup penghapusan pada:
+
+      backup/remove-exclusions/<timestamp>-<rule-id>/
+
+Parameter:
+
+    --rule-id
+    --dry-run
+    --force
+    --help
+
+Script tidak melakukan validasi konfigurasi Nginx/ModSecurity maupun reload Nginx. Setelah exclusion dihapus, jalankan `scripts/deploy.sh` agar konfigurasi aktif diperbarui.
+
 ### Changed
 
-Belum ada.
+#### 1. Add Exclusion Scope and Target Handling
+
+Memperbarui `scripts/add-exclusion.sh` agar:
+
+- Opsi `--target` menjadi opsional.
+- Opsi `--method` menerima beberapa metode HTTP yang dipisahkan koma.
+- Opsi `--target` menerima beberapa target yang dipisahkan koma.
+- Pengecualian tanpa `--target` berlaku untuk seluruh source Rule ID pada kombinasi host, metode, dan URI path yang cocok.
+- Pengecualian dengan `--target` hanya berlaku untuk target yang ditentukan.
+- Rule exclusion menyertakan pesan dan tag `BREBES-WAF/EXCLUSION`.
+
+Penggunaan tanpa `--target` memiliki cakupan lebih luas dan harus dipertimbangkan secara hati-hati. Pengecualian target tertentu tetap menjadi pilihan yang disarankan apabila false positive hanya berasal dari parameter tertentu.
+
+#### 2. Exclusion Management Workflow
+
+Workflow pengelolaan exclusion distandarkan:
+
+    Analyze Detection
+          |
+          v
+    Add or Remove Exclusion
+          |
+          v
+    Review File and Registry
+          |
+          v
+    scripts/deploy.sh
+          |
+          v
+    nginx -t
+          |
+          v
+    Reload Nginx
+          |
+          v
+    Verify Application and Logs
+
+Perubahan file exclusion dan registry belum mengubah konfigurasi ModSecurity aktif sampai deployment berhasil.
 
 ### Deprecated
 
@@ -72,12 +142,16 @@ Belum ada.
 
 ### Security
 
-Belum ada.
+- Exclusion dapat dibatasi berdasarkan host, metode HTTP, URI path, source Rule ID, dan target parameter.
+- Penggunaan `--target` yang dihilangkan menonaktifkan pemeriksaan seluruh source Rule ID dalam scope yang cocok; penggunaan ini memiliki dampak lebih luas daripada pengecualian target tertentu.
+- Script penghapusan membuat backup file exclusion dan registry sebelum melakukan perubahan.
+- Deployment tetap menjadi tahap validasi konfigurasi ModSecurity melalui `nginx -t` sebelum konfigurasi baru digunakan.
 
 ### Documentation
 
-- Menambahkan dokumentasi penggunaan `scripts/add-exclusion.sh`, termasuk simulasi `--dry-run`, pembuatan exclusion, registry custom Rule ID, deployment, dan verifikasi hasil.
-- Mendokumentasikan prinsip pembatasan exclusion agar hanya berlaku pada host, metode HTTP, URI path, source Rule ID, dan target yang ditentukan.
+- Memperbarui dokumentasi `scripts/add-exclusion.sh`, termasuk dukungan multi-method, multi-target, dan perilaku ketika `--target` tidak diberikan.
+- Menambahkan dokumentasi `scripts/remove-exclusions.sh`, termasuk dry-run, backup, penghapusan registry, rollback, dan deployment ulang.
+- Mendokumentasikan tag logging `BREBES-WAF/EXCLUSION` serta batasan bahwa pencatatan event bergantung pada konfigurasi logging ModSecurity.
 
 ---
 
@@ -1836,6 +1910,9 @@ Struktur repository BREBES-WAF:
     ├── samples/
     │
     ├── scripts/
+    │   ├── add-exclusion.sh
+    │   ├── remove-exclusions.sh
+    │   ├── analyze-detection.sh
     │   ├── check-dependencies.sh
     │   ├── check-last-detection.sh
     │   ├── deploy.sh
