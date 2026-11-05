@@ -12,7 +12,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-SCRIPT_VERSION="1.0.2"
+SCRIPT_VERSION="1.1.0"
 
 # Resolve BREBES-WAF root from this script location:
 # /opt/Brebes-WAF/scripts/add-exclusion.sh -> /opt/Brebes-WAF
@@ -50,9 +50,10 @@ add-exclusion.sh - Add one BREBES-WAF custom target exclusion
 
 Required:
   --url URL              Full endpoint URL (query string is ignored for URI match)
-  --method METHOD        HTTP method, e.g. GET, POST, PUT, DELETE
+  --method METHODS       HTTP method(s), comma-separated, e.g. GET,POST
   --rule-id ID           Existing ModSecurity rule ID to exclude
-  --target TARGET        Exactly one target, e.g. ARGS:uttp_type
+  --target TARGETS       Optional comma-separated targets, e.g. ARGS:a,ARGS:b
+                         If omitted, exclude the entire source rule in this scope
 
 Optional:
   --name NAME            Descriptive application/file name
@@ -70,7 +71,7 @@ Example:
     --url 'https://app.example.com/user/process?id=123' \
     --method POST \
     --rule-id 933210 \
-    --target 'ARGS:document_type' \
+    --target 'ARGS:document_type,ARGS:other_field' \
     --description 'False positive pada parameter document_type'
 
 This script creates a custom exclusion only. It does not run nginx -t or reload Nginx.
@@ -101,7 +102,6 @@ done
 [[ -n "$URL" ]] || die "--url wajib diisi."
 [[ -n "$METHOD" ]] || die "--method wajib diisi."
 [[ -n "$SOURCE_RULE_ID" ]] || die "--rule-id wajib diisi."
-[[ -n "$TARGET" ]] || die "--target wajib diisi."
 
 command -v python3 >/dev/null 2>&1 || die "python3 tidak ditemukan."
 command -v find >/dev/null 2>&1 || die "find tidak ditemukan."
@@ -112,14 +112,46 @@ command -v sort >/dev/null 2>&1 || die "sort tidak ditemukan."
 [[ "$CUSTOM_ID_START" =~ ^[0-9]+$ ]] || die "CUSTOM_ID_START harus berupa angka."
 (( CUSTOM_ID_START > 0 )) || die "CUSTOM_ID_START harus lebih besar dari 0."
 
-METHOD="${METHOD^^}"
-[[ "$METHOD" =~ ^[A-Z][A-Z0-9_-]*$ ]] || die "Format HTTP method tidak valid."
+# Parse and validate comma-separated HTTP methods.
+METHODS=()
+IFS=',' read -r -a METHOD_INPUTS <<< "$METHOD"
+for item in "${METHOD_INPUTS[@]}"; do
+    item="${item//[[:space:]]/}"
+    item="${item^^}"
+    [[ "$item" =~ ^[A-Z][A-Z0-9_-]*$ ]] || die "HTTP method tidak valid: $item"
+    for existing in "${METHODS[@]:-}"; do
+        [[ "$existing" != "$item" ]] || die "HTTP method duplikat: $item"
+    done
+    METHODS+=("$item")
+done
+((${#METHODS[@]} > 0)) || die "--method wajib diisi."
+METHOD_DISPLAY="$(IFS=','; printf '%s' "${METHODS[*]}")"
+METHOD_REGEX="^("
+for i in "${!METHODS[@]}"; do
+    (( i == 0 )) || METHOD_REGEX+="|"
+    METHOD_REGEX+="${METHODS[$i]}"
+done
+METHOD_REGEX+=")$"
 
-# Deliberately allow a single target only; reject comma/semicolon/whitespace.
-[[ "$TARGET" != *","* && "$TARGET" != *";"* && "$TARGET" != *" "* && "$TARGET" != *$'\t'* ]] \
-    || die "--target hanya boleh berisi satu target."
-[[ "$TARGET" =~ ^(ARGS|ARGS_NAMES|REQUEST_HEADERS|REQUEST_COOKIES|FILES|XML)(:[A-Za-z0-9_.:-]+)?$ ]] \
-    || die "Format target tidak didukung: $TARGET. Contoh: ARGS:uttp_type"
+# --target is optional. If supplied, validate a comma-separated target list.
+TARGETS=()
+if [[ -n "$TARGET" ]]; then
+    IFS=',' read -r -a TARGET_INPUTS <<< "$TARGET"
+    for item in "${TARGET_INPUTS[@]}"; do
+        item="${item//[[:space:]]/}"
+        [[ "$item" =~ ^(ARGS|ARGS_NAMES|REQUEST_HEADERS|REQUEST_COOKIES|FILES|XML)(:[A-Za-z0-9_.:-]+)?$ ]] \
+            || die "Format target tidak didukung: $item. Contoh: ARGS:uttp_type"
+        for existing in "${TARGETS[@]:-}"; do
+            [[ "$existing" != "$item" ]] || die "Target duplikat: $item"
+        done
+        TARGETS+=("$item")
+    done
+fi
+if ((${#TARGETS[@]} == 0)); then
+    TARGET_DISPLAY="ALL (seluruh source rule)"
+else
+    TARGET_DISPLAY="$(IFS=,; printf '%s' "${TARGETS[*]}")"
+fi
 
 [[ -d "$BREBES_WAF_HOME" ]] || die "Direktori BREBES-WAF tidak ditemukan: $BREBES_WAF_HOME"
 [[ -d "$RULES_DIR" ]] || die "Direktori rules tidak ditemukan: $RULES_DIR"
@@ -295,33 +327,51 @@ OUT_FILE="${CUSTOM_DIR}/${NEW_ID}-${SLUG}.conf"
 
 # REQUEST_URI includes the query string. Match the path only, regardless of query.
 # The escaped path is anchored and followed by end-of-string or '?'.
+# Build a readable BREBES-WAF audit message; escape quotes/backslashes for SecLang.
+LOG_RAW="BREBES-WAF custom exclusion matched: host=${HOST} methods=${METHOD_DISPLAY} uri=${URI_PATH} source_rule=${SOURCE_RULE_ID} custom_rule=${NEW_ID}"
+LOG_MESSAGE="$(printf '%s' "$LOG_RAW" | tr "\\\'" "__")"
+
+# Build the final ctl action. With no target, remove the whole source rule;
+# otherwise remove only the listed targets from that source rule.
+CTL_ACTIONS=()
+if ((${#TARGETS[@]} == 0)); then
+    CTL_ACTIONS+=("ctl:ruleRemoveById=${SOURCE_RULE_ID}")
+else
+    for target_item in "${TARGETS[@]}"; do
+        CTL_ACTIONS+=("ctl:ruleRemoveTargetById=${SOURCE_RULE_ID};${target_item}")
+    done
+fi
+CTL_ACTION="$(IFS=','; printf '%s' "${CTL_ACTIONS[*]}")"
+
 RULE_CONTENT=$(cat <<EOF
-# Application : ${HOST}
+# Application : ${NAME:-${HOST}}
+# Host        : ${HOST}
 # Endpoint    : ${URI_PATH}
-# Method      : ${METHOD}
-# Exclude     : Rule ID ${SOURCE_RULE_ID}
-# Target      : ${TARGET}
+# Methods     : ${METHOD_DISPLAY}
+# Source Rule : ${SOURCE_RULE_ID}
+# Target      : ${TARGET_DISPLAY}
 # Description : ${DESCRIPTION:-Not specified}
 # Generated   : $(date '+%Y-%m-%d %H:%M:%S %z')
 #
-# This exclusion is scoped to one host, method, URI path, source rule and target.
+# BREBES-WAF scoped exclusion. The audit event is logged when this chain matches.
 
-SecRule REQUEST_HEADERS:Host "@streq ${HOST}" \\
-    "id:${NEW_ID},phase:1,pass,nolog,chain"
-    SecRule REQUEST_METHOD "@streq ${METHOD}" "chain"
-    SecRule REQUEST_URI "@rx ^${PATH_RE}(?:\\?.*)?$" \\
-        "ctl:ruleRemoveTargetById=${SOURCE_RULE_ID};${TARGET}"
+SecRule REQUEST_HEADERS:Host "@streq ${HOST}" \
+    "id:${NEW_ID},phase:1,pass,log,msg:'${LOG_MESSAGE}',tag:'BREBES-WAF/EXCLUSION',chain"
+    SecRule REQUEST_METHOD "@rx ${METHOD_REGEX}" "chain"
+    SecRule REQUEST_URI "@rx ^${PATH_RE}(?:\\?.*)?$" \
+        "${CTL_ACTION}"
 EOF
 )
+
 
 printf '%s\n' "$RULE_CONTENT" > "$TMP_DIR/proposed.conf"
 
 log "Ringkasan exclusion:"
 printf '  Host             : %s\n' "$HOST"
 printf '  URI path         : %s\n' "$URI_PATH"
-printf '  HTTP method      : %s\n' "$METHOD"
+printf '  HTTP methods     : %s\n' "$METHOD_DISPLAY"
 printf '  Source Rule ID   : %s\n' "$SOURCE_RULE_ID"
-printf '  Target           : %s\n' "$TARGET"
+printf '  Target           : %s\n' "$TARGET_DISPLAY"
 printf '  New custom ID    : %s\n' "$NEW_ID"
 printf '  Output           : %s\n' "$OUT_FILE"
 printf '\n'
