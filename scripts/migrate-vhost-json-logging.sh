@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # BREBES-WAF - Migrate active Nginx virtual-host access logs: reverser -> JSON
-# Version: 1.0.0
+# Version: 1.1.0
 #
 # Safe by default: run without arguments for a dry-run.
 # Apply changes only with: --apply
@@ -12,6 +12,8 @@ SCRIPT_NAME="${0##*/}"
 TARGET_FORMAT="brebes_waf_json"
 SOURCE_FORMAT="reverser"
 BACKUP_ROOT="/opt/Brebes-WAF/backup/vhost-log-migration"
+VHOST_ROOT="/etc/nginx/sites-available"
+GLOBAL_CONFIG="/etc/nginx/nginx.conf"
 NGINX_BIN="$(command -v nginx || true)"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -28,9 +30,11 @@ Usage:
   sudo ${SCRIPT_NAME} --dry-run  # explicit dry-run
   sudo ${SCRIPT_NAME} --apply    # backup, migrate, validate, rollback on error
 
-Only active configuration files reported by 'nginx -T' are examined.
-Only access_log directives whose format argument is exactly '${SOURCE_FORMAT}'
-are changed. Log paths, options, access_log off, and other formats are preserved.
+Only active virtual-host files under '${VHOST_ROOT}' are changed.
+The global config '${GLOBAL_CONFIG}' is checked first. If it contains an
+access_log using '${SOURCE_FORMAT}', the script stops and requests manual removal.
+Only virtual-host access_log directives using '${SOURCE_FORMAT}' are changed.
+Global config, conf.d, log_format declarations, paths and other formats are preserved.
 USAGE
 }
 
@@ -57,12 +61,122 @@ if ! "$NGINX_BIN" -T >"${TMP_DIR}/nginx-T.txt" 2>"${TMP_DIR}/nginx-T.err"; then
     die "nginx -T gagal. Tidak ada file yang diubah."
 fi
 
+# Guardrail: never migrate virtual hosts while the global config still has
+# access_log ... reverser. The user must remove that directive manually.
+info "Memeriksa global access_log pada ${GLOBAL_CONFIG} ..."
+if ! python3 - "${GLOBAL_CONFIG}" "${SOURCE_FORMAT}" <<'PY'
+import sys
+
+path, source_format = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        data = f.read()
+except OSError as exc:
+    print(f"[ERROR] Tidak dapat membaca konfigurasi global {path}: {exc}")
+    raise SystemExit(2)
+
+def statements(src):
+    start = 0
+    quote = None
+    escaped = False
+    comment = False
+    for i, ch in enumerate(src):
+        if comment:
+            if ch == "\n":
+                comment = False
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch == "#":
+            comment = True
+        elif ch == ";":
+            yield start, i, src[start:i]
+            start = i + 1
+        elif ch in "{}":
+            start = i + 1
+
+def tokens(statement):
+    result = []
+    i = 0
+    n = len(statement)
+    while i < n:
+        while i < n and statement[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if statement[i] == "#":
+            break
+        start = i
+        quote = None
+        escaped = False
+        while i < n:
+            ch = statement[i]
+            if quote:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                i += 1
+                continue
+            if ch == "#":
+                break
+            if ch.isspace():
+                break
+            i += 1
+        token = statement[start:i]
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+            token = token[1:-1]
+        if token:
+            result.append(token)
+        if i < n and statement[i] == "#":
+            break
+    return result
+
+found = []
+for start, end, statement in statements(data):
+    parts = tokens(statement)
+    if len(parts) >= 3 and parts[0] == "access_log" and parts[2] == source_format:
+        line = data.count("\n", 0, start) + 1
+        found.append((line, statement.strip()))
+
+if found:
+    print()
+    print("[ERROR] Ditemukan global access_log yang masih menggunakan format reverser:")
+    for line, statement in found:
+        print(f"  {path}:{line}: {statement};")
+    print()
+    print("[ACTION] Hapus directive access_log global tersebut secara MANUAL.")
+    print("[INFO] Script tidak akan mengubah /etc/nginx/nginx.conf.")
+    print("[INFO] Setelah penghapusan manual, jalankan nginx -t, lalu ulangi script.")
+    raise SystemExit(1)
+
+print("[ OK ] Tidak ditemukan global access_log dengan format reverser.")
+PY
+then
+    die "Migrasi dihentikan. Selesaikan pemeriksaan global secara manual terlebih dahulu."
+fi
+
 # The embedded parser reads nginx -T output, identifies active source files,
 # lexes Nginx directives (comments/quotes/braces aware), and creates a plan.
 python3 - "${TMP_DIR}/nginx-T.txt" "${TMP_DIR}/plan.tsv" "${SOURCE_FORMAT}" "${TARGET_FORMAT}" <<'PY'
 import os, re, sys, shlex
 
 source_file, plan_file, old_fmt, new_fmt = sys.argv[1:]
+vhost_root = os.path.realpath("/etc/nginx/sites-available")
 text = open(source_file, encoding='utf-8', errors='replace').read()
 marker = re.compile(r'^# configuration file (.+):\s*$', re.M)
 matches = list(marker.finditer(text))
@@ -74,9 +188,14 @@ for i, m in enumerate(matches):
     path = m.group(1).strip()
     end = matches[i+1].start() if i+1 < len(matches) else len(text)
     if path.startswith('/') and os.path.isfile(path):
-        # Read the real source file so byte offsets map exactly when applying edits.
+        # Only active virtual-host files are eligible for migration.
+        # nginx.conf and conf.d are deliberately excluded.
         real = os.path.realpath(path)
-        if real not in files:
+        try:
+            inside_vhost_root = os.path.commonpath([vhost_root, real]) == vhost_root
+        except ValueError:
+            inside_vhost_root = False
+        if inside_vhost_root and real != "/etc/nginx/nginx.conf" and real not in files:
             with open(real, encoding='utf-8', errors='surrogateescape') as fh:
                 files[real] = fh.read()
 
@@ -151,7 +270,7 @@ with open(plan_file, 'w', encoding='utf-8') as f:
             raise SystemExit('Nama file konfigurasi mengandung karakter yang tidak didukung.')
         f.write(f'{path}\t{a}\t{b}\t{token}\n')
 
-print(f'File konfigurasi aktif diperiksa : {len(files)}')
+print(f'File virtual host aktif diperiksa : {len(files)}')
 print(f'Deklarasi access_log reverser   : {len(plan)}')
 for path,a,b,token in plan:
     print(f'  {path}')
@@ -261,9 +380,10 @@ for line in open(sys.argv[1]):
 PY
     die "Verifikasi gagal; backup dipulihkan: ${BACKUP_DIR}"
 }
-python3 - "${TMP_DIR}/nginx-T-after.txt" "${SOURCE_FORMAT}" "${TARGET_FORMAT}" "${PLAN_COUNT}" <<'PY'
+if python3 - "${TMP_DIR}/nginx-T-after.txt" "${SOURCE_FORMAT}" "${TARGET_FORMAT}" "${PLAN_COUNT}" <<'PY'
 import os,re,sys,shlex
 srcfile,old,new,expected=sys.argv[1:]
+vhost_root=os.path.realpath("/etc/nginx/sites-available")
 txt=open(srcfile,encoding='utf-8',errors='replace').read()
 marker=re.compile(r'^# configuration file (.+):\s*$',re.M)
 ms=list(marker.finditer(txt)); files={}
@@ -271,7 +391,9 @@ for m in ms:
     p=m.group(1).strip()
     if p.startswith('/') and os.path.isfile(p):
         real=os.path.realpath(p)
-        if real not in files:
+        try: inside=os.path.commonpath([vhost_root,real]) == vhost_root
+        except ValueError: inside=False
+        if inside and real != "/etc/nginx/nginx.conf" and real not in files:
             with open(real,encoding='utf-8',errors='replace') as f: files[real]=f.read()
 def scan(s):
     start=0; q=None; esc=False; comment=False
@@ -325,7 +447,11 @@ if migrated < int(expected):
     raise SystemExit(3)
 print('Verification: PASS')
 PY
-VERIFY_STATUS=$?
+then
+    VERIFY_STATUS=0
+else
+    VERIFY_STATUS=$?
+fi
 if [[ "$VERIFY_STATUS" -ne 0 ]]; then
     err "Verifikasi migrasi gagal (status ${VERIFY_STATUS}); rollback otomatis."
     python3 - "${BACKUP_DIR}/MANIFEST.tsv" <<'PY'
@@ -338,7 +464,8 @@ PY
 fi
 
 ok "Migrasi selesai: ${PLAN_COUNT} deklarasi access_log reverser diubah menjadi ${TARGET_FORMAT}."
-ok "Konfigurasi Nginx valid; tidak ada access_log reverser tersisa pada konfigurasi aktif."
+ok "Konfigurasi Nginx valid; tidak ada access_log reverser tersisa pada virtual host."
+ok "Global access_log telah diperiksa dan tidak diubah."
 info "Backup: ${BACKUP_DIR}"
 info "Belum dilakukan reload/restart Nginx. Perubahan baru aktif setelah reload."
 info "Jika hasil validasi sudah sesuai, jalankan: systemctl reload nginx"
