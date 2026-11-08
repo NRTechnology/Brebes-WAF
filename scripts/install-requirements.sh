@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.4.0
+# Version : 1.5.1
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -20,7 +20,9 @@
 # IMPORTANT:
 #   - ModSecurity configuration follows the CSIRT Lab Reverser baseline.
 #   - SecResponseBodyAccess is ON with MIME and 1 MiB limits for performance.
-#   - Audit logging uses Concurrent format, matching CSIRT Lab Reverser.
+#   - Audit logging uses Concurrent format with 15-day retention.
+#   - Nginx JSON access logging is added alongside existing access logs.
+#   - Existing log_format reverser and access_log directives are preserved.
 #   - Existing configuration is backed up BEFORE modification.
 #   - Original configuration backup:
 #       /opt/Brebes-WAF/backup/orig/<YYYYMMDD-HHMMSS>/
@@ -67,6 +69,13 @@ CURRENT_BACKUP_DIR="${ORIGINAL_BACKUP_ROOT}/${BACKUP_TIMESTAMP}"
 # ModSecurity runtime/logging
 MODSECURITY_AUDIT_DIR="/var/log/nginx/modsecurity"
 MODSECURITY_DEBUG_LOG="${MODSECURITY_AUDIT_DIR}/debug.log"
+MODSECURITY_AUDIT_RETENTION_DAYS="15"
+MODSECURITY_RETENTION_SCRIPT="/usr/local/sbin/brebes-waf-modsecurity-retention.sh"
+MODSECURITY_RETENTION_SERVICE="/etc/systemd/system/brebes-waf-modsecurity-retention.service"
+MODSECURITY_RETENTION_TIMER="/etc/systemd/system/brebes-waf-modsecurity-retention.timer"
+MODSECURITY_DEBUG_LOGROTATE="/etc/logrotate.d/brebes-waf-modsecurity-debug"
+BREBES_WAF_LOG_FORMAT_FILE="${NGINX_CONF_D}/brebes-waf-log-format.conf"
+BREBES_WAF_ACCESS_LOG="/var/log/nginx/brebes-waf/access.json"
 
 # Match CSIRT Lab Reverser Concurrent audit configuration
 MODSECURITY_AUDIT_STORAGE_DIR="${MODSECURITY_AUDIT_DIR}"
@@ -178,9 +187,13 @@ on_error() {
 create_proxy_common_snippet() {
     log_section "Nginx Proxy Common Snippet"
 
+    local snippet_file="${NGINX_SNIPPETS}/proxy-common.conf"
+
     mkdir -p "${NGINX_SNIPPETS}"
 
-    cat > "${NGINX_SNIPPETS}/proxy-common.conf" <<'EOF'
+    if [[ ! -e "${snippet_file}" ]]; then
+        # First install only: create the standard snippet with request ID.
+        cat > "${snippet_file}" <<'EOF'
 proxy_http_version 1.1;
 
 proxy_set_header Host $host;
@@ -190,15 +203,245 @@ proxy_set_header X-Forwarded-Port $server_port;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Real-IP $remote_addr;
 
+# BREBES-WAF: propagate Nginx-generated request ID to the upstream.
+proxy_set_header X-Request-ID $request_id;
+
 # Minta backend mengirim response tanpa kompresi
 proxy_set_header Accept-Encoding "";
 EOF
+        chmod 0644 "${snippet_file}"
+        log_ok "Nginx proxy common snippet baru dibuat dengan X-Request-ID."
+    elif grep -Eq '^[[:space:]]*proxy_set_header[[:space:]]+X-Request-ID[[:space:]]+' "${snippet_file}"; then
+        # Existing custom value is deliberately preserved.
+        log_ok "X-Request-ID sudah ada; konfigurasi existing dipertahankan."
+    else
+        # Existing file: append only the missing directive. Do not rewrite
+        # or normalize any existing proxy settings, comments, owner or mode.
+        {
+            printf '\n'
+            printf '%s\n' '# BREBES-WAF: propagate Nginx-generated request ID to the upstream.'
+            printf '%s\n' 'proxy_set_header X-Request-ID $request_id;'
+        } >> "${snippet_file}"
+        log_ok "X-Request-ID ditambahkan tanpa mengubah isi snippet existing."
+    fi
 
-    chmod 0644 "${NGINX_SNIPPETS}/proxy-common.conf"
-
-    log_ok "Nginx proxy common snippet berhasil dibuat:"
-    echo "    ${NGINX_SNIPPETS}/proxy-common.conf"
+    log_ok "Nginx proxy common snippet:"
+    echo "    ${snippet_file}"
 }
+
+
+# =============================================================================
+# BREBES-WAF JSON Access Log
+# =============================================================================
+configure_brebes_waf_json_access_log() {
+    log_section "BREBES-WAF JSON Access Log Configuration"
+    mkdir -p "${NGINX_CONF_D}" "$(dirname "${BREBES_WAF_ACCESS_LOG}")"
+
+    # Dedicated file: do not overwrite an existing file or unrelated log formats.
+    if [[ ! -e "${BREBES_WAF_LOG_FORMAT_FILE}" ]]; then
+        cat > "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
+##
+# BREBES-WAF ACCESS LOG STANDARD v1.0
+# Format : JSON Lines (NDJSON)
+# Purpose: Security Monitoring & Incident Response
+##
+log_format brebes_waf_json escape=json
+  '{'
+    '"@timestamp":"$time_iso8601",'
+    '"event_type":"http_access",'
+    '"observer_name":"$hostname",'
+    '"request_id":"$request_id",'
+    '"client_ip":"$remote_addr",'
+    '"xff":"$http_x_forwarded_for",'
+    '"host":"$host",'
+    '"server_name":"$server_name",'
+    '"server_addr":"$server_addr",'
+    '"server_port":"$server_port",'
+    '"scheme":"$scheme",'
+    '"method":"$request_method",'
+    '"uri":"$uri",'
+    '"protocol":"$server_protocol",'
+    '"status":$status,'
+    '"request_length":$request_length,'
+    '"body_bytes_sent":$body_bytes_sent,'
+    '"bytes_sent":$bytes_sent,'
+    '"referer":"$http_referer",'
+    '"user_agent":"$http_user_agent",'
+    '"request_time":$request_time,'
+    '"upstream_addr":"$upstream_addr",'
+    '"upstream_status":"$upstream_status",'
+    '"upstream_connect_time":"$upstream_connect_time",'
+    '"upstream_header_time":"$upstream_header_time",'
+    '"upstream_response_time":"$upstream_response_time",'
+    '"upstream_cache_status":"$upstream_cache_status",'
+    '"connection":"$connection",'
+    '"connection_requests":"$connection_requests",'
+    '"ssl_protocol":"$ssl_protocol",'
+    '"ssl_cipher":"$ssl_cipher"'
+  '}';
+EOF
+        chmod 0644 "${BREBES_WAF_LOG_FORMAT_FILE}"
+        log_ok "Dedicated JSON log format file dibuat."
+    elif grep -Eq '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' "${BREBES_WAF_LOG_FORMAT_FILE}"; then
+        log_ok "JSON log format sudah ada; file dipertahankan."
+    else
+        log_warn "File ${BREBES_WAF_LOG_FORMAT_FILE} sudah ada tanpa brebes_waf_json."
+        log_info "Menambahkan format JSON tanpa menghapus isi yang sudah ada."
+        cat >> "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
+
+##
+# BREBES-WAF ACCESS LOG STANDARD v1.0
+# Format : JSON Lines (NDJSON)
+##
+log_format brebes_waf_json escape=json
+  '{'
+    '"@timestamp":"$time_iso8601",'
+    '"event_type":"http_access",'
+    '"observer_name":"$hostname",'
+    '"request_id":"$request_id",'
+    '"client_ip":"$remote_addr",'
+    '"xff":"$http_x_forwarded_for",'
+    '"host":"$host",'
+    '"server_name":"$server_name",'
+    '"server_addr":"$server_addr",'
+    '"server_port":"$server_port",'
+    '"scheme":"$scheme",'
+    '"method":"$request_method",'
+    '"uri":"$uri",'
+    '"protocol":"$server_protocol",'
+    '"status":$status,'
+    '"request_length":$request_length,'
+    '"body_bytes_sent":$body_bytes_sent,'
+    '"bytes_sent":$bytes_sent,'
+    '"referer":"$http_referer",'
+    '"user_agent":"$http_user_agent",'
+    '"request_time":$request_time,'
+    '"upstream_addr":"$upstream_addr",'
+    '"upstream_status":"$upstream_status",'
+    '"upstream_connect_time":"$upstream_connect_time",'
+    '"upstream_header_time":"$upstream_header_time",'
+    '"upstream_response_time":"$upstream_response_time",'
+    '"upstream_cache_status":"$upstream_cache_status",'
+    '"connection":"$connection",'
+    '"connection_requests":"$connection_requests",'
+    '"ssl_protocol":"$ssl_protocol",'
+    '"ssl_cipher":"$ssl_cipher"'
+  '}';
+EOF
+    fi
+
+    # Fail safely rather than creating duplicate log_format declarations.
+    OTHER_JSON_FORMATS="$(grep -RIlE '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
+        /etc/nginx --include='*.conf' 2>/dev/null | grep -Fvx "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+    [[ -z "${OTHER_JSON_FORMATS}" ]] || \
+        die "log_format brebes_waf_json sudah didefinisikan di file lain: ${OTHER_JSON_FORMATS}"
+
+    touch "${BREBES_WAF_ACCESS_LOG}"
+    chown www-data:adm "${BREBES_WAF_ACCESS_LOG}"
+    chmod 0640 "${BREBES_WAF_ACCESS_LOG}"
+
+    # Preserve reverser and every existing access_log directive. Nginx supports
+    # multiple access_log directives in the same context.
+    JSON_ACCESS_LOG_PATTERN='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'
+    if grep -RqsE "${JSON_ACCESS_LOG_PATTERN}" /etc/nginx --include='*.conf' 2>/dev/null; then
+        log_ok "JSON access_log sudah dikonfigurasi; tidak menambahkan duplikasi."
+    else
+        log_info "Menambahkan JSON access_log tanpa mengubah access_log yang sudah ada."
+        sed -i '/^[[:space:]]*http[[:space:]]*{/a\
+\
+        # BREBES-WAF JSON Access Log (additional; existing logs preserved)\
+        access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;\
+' "${NGINX_MAIN_CONF}"
+    fi
+
+    # Explicitly verify the legacy reverser format has not been removed.
+    if grep -RqsE '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' /etc/nginx --include='*.conf' 2>/dev/null; then
+        log_ok "Legacy log_format reverser tetap tersedia."
+    else
+        log_warn "log_format reverser tidak ditemukan; tidak menghapus atau mengganti format log lain."
+    fi
+
+    log_ok "JSON log format: ${BREBES_WAF_LOG_FORMAT_FILE}"
+    log_ok "JSON access log: ${BREBES_WAF_ACCESS_LOG}"
+}
+
+# =============================================================================
+# ModSecurity Audit Log Retention
+# =============================================================================
+configure_modsecurity_log_retention() {
+    log_section "ModSecurity Audit Log Retention"
+
+    cat > "${MODSECURITY_RETENTION_SCRIPT}" <<'EOF'
+#!/bin/bash
+set -Eeuo pipefail
+AUDIT_DIR="/var/log/nginx/modsecurity"
+RETENTION_MINUTES="21600"
+[[ -d "${AUDIT_DIR}" ]] || exit 0
+
+# Concurrent transaction files older than 15 days; exclude debug.log.
+find "${AUDIT_DIR}" -xdev -type f ! -name 'debug.log' \
+    -mmin +"${RETENTION_MINUTES}" -print -delete
+
+# Remove empty date/hour directories left by deleted transactions.
+find "${AUDIT_DIR}" -xdev -mindepth 1 -depth -type d -empty -delete
+EOF
+    chmod 0750 "${MODSECURITY_RETENTION_SCRIPT}"
+    chown root:root "${MODSECURITY_RETENTION_SCRIPT}"
+
+    cat > "${MODSECURITY_RETENTION_SERVICE}" <<EOF
+[Unit]
+Description=BREBES-WAF ModSecurity audit log retention cleanup
+
+[Service]
+Type=oneshot
+ExecStart=${MODSECURITY_RETENTION_SCRIPT}
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=${MODSECURITY_AUDIT_DIR}
+EOF
+
+    cat > "${MODSECURITY_RETENTION_TIMER}" <<'EOF'
+[Unit]
+Description=Daily BREBES-WAF ModSecurity audit log retention
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+
+    cat > "${MODSECURITY_DEBUG_LOGROTATE}" <<'EOF'
+/var/log/nginx/modsecurity/debug.log {
+    daily
+    rotate 15
+    maxage 15
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 www-data adm
+    sharedscripts
+    postrotate
+        if systemctl is-active --quiet nginx; then
+            systemctl kill --signal=USR1 --kill-who=main nginx >/dev/null 2>&1 || true
+        fi
+    endscript
+}
+EOF
+    chmod 0644 "${MODSECURITY_RETENTION_SERVICE}" "${MODSECURITY_RETENTION_TIMER}" "${MODSECURITY_DEBUG_LOGROTATE}"
+    systemctl daemon-reload
+    systemctl enable --now brebes-waf-modsecurity-retention.timer >/dev/null
+    "${MODSECURITY_RETENTION_SCRIPT}"
+    log_ok "Initial ModSecurity audit cleanup selesai."
+    log_ok "ModSecurity audit transaction retention: 15 hari."
+    log_ok "debug.log: logrotate harian, retensi maksimum 15 hari."
+}
+
 
 trap on_error ERR
 
@@ -323,6 +566,10 @@ file_backup "${NGINX_SITES_ENABLED}" "etc/nginx/sites-enabled"
 file_backup "${NGINX_SITES_AVAILABLE}" "etc/nginx/sites-available"
 file_backup "${NGINX_SNIPPETS}" "etc/nginx/snippets"
 file_backup "${NGINX_CONF_D}" "etc/nginx/conf.d"
+file_backup "/etc/logrotate.d/brebes-waf-modsecurity-debug" "etc/logrotate.d/brebes-waf-modsecurity-debug"
+file_backup "/etc/systemd/system/brebes-waf-modsecurity-retention.service" "etc/systemd/system/brebes-waf-modsecurity-retention.service"
+file_backup "/etc/systemd/system/brebes-waf-modsecurity-retention.timer" "etc/systemd/system/brebes-waf-modsecurity-retention.timer"
+file_backup "/usr/local/sbin/brebes-waf-modsecurity-retention.sh" "usr/local/sbin/brebes-waf-modsecurity-retention.sh"
 
 # ModSecurity
 file_backup "${MODSECURITY_CONF}" "etc/nginx/modsecurity.conf"
@@ -1040,102 +1287,43 @@ else
 fi
 
 # =============================================================================
-# Nginx reverser Log Format
+# Nginx reverser Log Format Compatibility Check
 # =============================================================================
 
-log_section "Nginx reverser Log Format Check"
+log_section "Nginx reverser Log Format Compatibility Check"
 
-if grep -Eq \
-    '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "log_format reverser ditemukan."
-
+if grep -RqsE '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' /etc/nginx --include='*.conf' 2>/dev/null; then
+    log_ok "log_format reverser ditemukan dan dipertahankan."
 else
-
-    log_info "log_format reverser belum tersedia. Menambahkan ke http {}..."
-
+    log_warn "log_format reverser belum tersedia; menambahkan format kompatibilitas tanpa mengubah access_log lain."
     sed -i '/^[[:space:]]*http[[:space:]]*{/a\
 \
         ##\
-        # BREBES Reverse Proxy Log Format\
+        # BREBES Reverse Proxy Log Format (legacy compatibility)\
         ##\
         log_format reverser\
-          '\''$remote_addr '\''\
-          '\''[$time_local] '\''\
-          '\''"$request" '\''\
-          '\''$status '\''\
-          '\''$body_bytes_sent '\''\
-          '\''"$http_referer" '\''\
-          '\''"$http_user_agent" '\''\
-          '\''host="$host" '\''\
-          '\''xff="$http_x_forwarded_for" '\''\
-          '\''rt=$request_time '\''\
-          '\''urt=$upstream_response_time '\''\
-          '\''upstream="$upstream_addr"'\'';\
+          '\\''$remote_addr '\\''\
+          '\\''[$time_local] '\\''\
+          '\\''"$request" '\\''\
+          '\\''$status '\\''\
+          '\\''$body_bytes_sent '\\''\
+          '\\''"$http_referer" '\\''\
+          '\\''"$http_user_agent" '\\''\
+          '\\''host="$host" '\\''\
+          '\\''xff="$http_x_forwarded_for" '\\''\
+          '\\''rt=$request_time '\\''\
+          '\\''urt=$upstream_response_time '\\''\
+          '\\''upstream="$upstream_addr" '\\'';\
 ' "${NGINX_MAIN_CONF}"
-
-    log_ok "log_format reverser berhasil ditambahkan."
-
+    log_ok "Legacy log_format reverser ditambahkan; access_log existing tetap utuh."
 fi
-
-# Validate important reverser fields.
-for FIELD in \
-    'host="$host"' \
-    'xff="$http_x_forwarded_for"' \
-    'rt=$request_time' \
-    'urt=$upstream_response_time' \
-    'upstream="$upstream_addr"'
-do
-    if grep -Fq "${FIELD}" "${NGINX_MAIN_CONF}"; then
-        log_ok "reverser field: ${FIELD}"
-    else
-        log_warn "reverser field belum ditemukan: ${FIELD}"
-    fi
-done
 
 # =============================================================================
-# Nginx Global Access Log
+# BREBES-WAF JSON Access Log and ModSecurity Retention
 # =============================================================================
 
-log_section "Nginx Global Access Log Check"
-
-if grep -Eq \
-    '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "Global access_log menggunakan format reverser."
-
-else
-
-    if grep -Eq \
-        '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]*;' \
-        "${NGINX_MAIN_CONF}"; then
-
-        sed -i \
-            's#^[[:space:]]*access_log[[:space:]]*/var/log/nginx/access\.log[[:space:]]*;#        access_log /var/log/nginx/access.log reverser;#' \
-            "${NGINX_MAIN_CONF}"
-
-        log_ok "Global access_log diubah ke format reverser."
-
-    else
-
-        die "Global access_log /var/log/nginx/access.log tidak ditemukan di ${NGINX_MAIN_CONF}."
-
-    fi
-fi
-
-if grep -Eq \
-    '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;' \
-    "${NGINX_MAIN_CONF}"; then
-
-    log_ok "Global access_log reverser aktif."
-
-else
-
-    die "Global access_log reverser belum terdeteksi."
-
-fi
+configure_brebes_waf_json_access_log
+configure_modsecurity_log_retention
 
 # =============================================================================
 # Display Configuration
@@ -1155,16 +1343,18 @@ grep -E \
     "${NGINX_MAIN_CONF}" || true
 
 echo
-echo "--- Nginx reverser log format ---"
-awk '
-    /^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)/ {
-        found=1
-    }
-    found {
-        print
-        if ($0 ~ /;[[:space:]]*$/) exit
-    }
-' "${NGINX_MAIN_CONF}" || true
+echo "--- BREBES-WAF JSON log format ---"
+cat "${BREBES_WAF_LOG_FORMAT_FILE}"
+
+echo
+echo "--- Nginx global JSON access_log ---"
+grep -E '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;' "${NGINX_MAIN_CONF}" || true
+
+echo
+echo "--- ModSecurity retention ---"
+echo "    Audit retention : 15 days"
+echo "    Cleanup timer   : brebes-waf-modsecurity-retention.timer"
+echo "    Debug log       : daily rotation, maxage 15"
 
 # =============================================================================
 # Verify ModSecurity Include
@@ -1243,24 +1433,19 @@ else
 fi
 
 if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)'; then
-    log_ok "log_format reverser aktif."
+    grep -Eq '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)'; then
+    log_ok "log_format brebes_waf_json aktif."
 else
     rollback_nginx_conf
-    die "log_format reverser belum terdeteksi."
+    die "log_format brebes_waf_json belum terdeteksi."
 fi
 
 if echo "${NGINX_DUMP}" |
-    grep -Eq \
-        '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log[[:space:]]+reverser[[:space:]]*;'; then
-
-    log_ok "Global access_log reverser aktif pada effective configuration."
-
+    grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'; then
+    log_ok "Global JSON access_log aktif pada effective configuration."
 else
-
     rollback_nginx_conf
-    die "Global access_log reverser belum terdeteksi pada effective configuration."
-
+    die "Global JSON access_log belum terdeteksi pada effective configuration."
 fi
 
 if echo "${NGINX_DUMP}" |
@@ -1584,6 +1769,16 @@ else
     die "Runtime: Nginx NOT RUNNING."
 fi
 
+if systemctl is-active --quiet brebes-waf-modsecurity-retention.timer; then
+    log_ok "Runtime: ModSecurity 15-day retention timer ACTIVE."
+else
+    die "Runtime: ModSecurity retention timer tidak aktif."
+fi
+
+[[ -x "${MODSECURITY_RETENTION_SCRIPT}" ]] ||
+    die "Runtime: retention cleanup script tidak executable."
+log_ok "Runtime: ModSecurity retention script tersedia."
+
 # =============================================================================
 # Final Summary
 # =============================================================================
@@ -1626,13 +1821,17 @@ echo "    Parts                 : ${AUDIT_PARTS}"
 echo "    Storage               : ${MODSECURITY_AUDIT_STORAGE_DIR}"
 echo
 echo "Nginx logging:"
-echo "    Format                : reverser"
-echo "    Host                  : host=\"\$host\""
-echo "    X-Forwarded-For       : xff=\"\$http_x_forwarded_for\""
-echo "    Request time          : rt=\$request_time"
-echo "    Upstream time         : urt=\$upstream_response_time"
-echo "    Upstream address      : upstream=\"\$upstream_addr\""
+echo "    Format                : JSON Lines (NDJSON)"
+echo "    Log format            : brebes_waf_json"
+echo "    Access log            : ${BREBES_WAF_ACCESS_LOG}"
+echo "    Correlation ID        : \$request_id"
+
 echo
+echo "ModSecurity retention:"
+echo "    Audit transactions    : 15 days"
+echo "    Cleanup schedule      : daily (systemd timer)"
+echo "    Debug log             : logrotate daily, max 15 days"
+
 echo "Ubuntu repository:"
 echo "    Main                  : ${UBUNTU_MAIN_REPOSITORY}"
 echo "    Security              : ${UBUNTU_SECURITY_REPOSITORY}"
