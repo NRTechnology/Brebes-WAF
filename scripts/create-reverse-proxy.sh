@@ -1,15 +1,62 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 # =============================================================================
 # BREBES-WAF
 # Nginx Reverse Proxy Configuration Generator
+#
+# File    : scripts/create-reverse-proxy.sh
+# Version : 1.1.0
+#
+# Changes:
+#   - Uses brebes_waf_json instead of reverser for new virtual hosts.
+#   - Refuses to overwrite an existing vhost or enabled site.
+#   - Verifies that brebes_waf_json is defined exactly once in active Nginx
+#     configuration before generating a virtual host.
+#   - Validates Nginx configuration and rolls back only files created by this
+#     execution if validation fails.
+#   - Does not reload or restart Nginx automatically.
+#
+# Existing virtual hosts and running configurations are not modified.
 # =============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # =============================================================================
-# Usage
+# Configuration
 # =============================================================================
+
+NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
+NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
+NGINX_SNIPPET="/etc/nginx/snippets/proxy-common.conf"
+JSON_LOG_FORMAT_NAME="brebes_waf_json"
+NGINX_JSON_LOG_FORMAT_FILE="/etc/nginx/conf.d/brebes-waf-log-format.conf"
+
+# =============================================================================
+# Colors and helpers
+# =============================================================================
+
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+fi
+
+log_info()  { printf '%b[INFO]%b %s\n' "${BLUE}" "${NC}" "$*"; }
+log_ok()    { printf '%b[ OK ]%b %s\n' "${GREEN}" "${NC}" "$*"; }
+log_warn()  { printf '%b[WARN]%b %s\n' "${YELLOW}" "${NC}" "$*"; }
+log_error() { printf '%b[ERROR]%b %s\n' "${RED}" "${NC}" "$*" >&2; }
+
+die() {
+    log_error "$*"
+    exit 1
+}
 
 usage() {
     cat <<EOF
@@ -32,6 +79,11 @@ Example:
     --ssl-cert /var/ssl_cert/example.com.crt \\
     --ssl-key /var/ssl_cert/example.com.key \\
     --proxy-pass http://192.0.2.10:8080
+
+Catatan:
+  - Virtual host baru menggunakan format access log brebes_waf_json.
+  - Konfigurasi virtual host yang sudah ada tidak akan ditimpa.
+  - Nginx tidak di-reload otomatis.
 EOF
 }
 
@@ -47,38 +99,22 @@ PROXY_PASS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --domain)
-            if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "[ERROR] Opsi --domain membutuhkan nilai." >&2
-                usage
-                exit 1
-            fi
+            [[ $# -ge 2 && -n "${2:-}" ]] || { usage; die "Opsi --domain membutuhkan nilai."; }
             DOMAIN="$2"
             shift 2
             ;;
         --ssl-cert)
-            if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "[ERROR] Opsi --ssl-cert membutuhkan nilai." >&2
-                usage
-                exit 1
-            fi
+            [[ $# -ge 2 && -n "${2:-}" ]] || { usage; die "Opsi --ssl-cert membutuhkan nilai."; }
             SSL_CERTIFICATE="$2"
             shift 2
             ;;
         --ssl-key)
-            if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "[ERROR] Opsi --ssl-key membutuhkan nilai." >&2
-                usage
-                exit 1
-            fi
+            [[ $# -ge 2 && -n "${2:-}" ]] || { usage; die "Opsi --ssl-key membutuhkan nilai."; }
             SSL_CERTIFICATE_KEY="$2"
             shift 2
             ;;
         --proxy-pass)
-            if [[ $# -lt 2 || -z "$2" ]]; then
-                echo "[ERROR] Opsi --proxy-pass membutuhkan nilai." >&2
-                usage
-                exit 1
-            fi
+            [[ $# -ge 2 && -n "${2:-}" ]] || { usage; die "Opsi --proxy-pass membutuhkan nilai."; }
             PROXY_PASS="$2"
             shift 2
             ;;
@@ -87,71 +123,146 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo "[ERROR] Opsi tidak dikenal: $1" >&2
             usage
-            exit 1
+            die "Opsi tidak dikenal: $1"
             ;;
     esac
 done
 
-if [[ -z "${DOMAIN}" || -z "${SSL_CERTIFICATE}" || \
-      -z "${SSL_CERTIFICATE_KEY}" || -z "${PROXY_PASS}" ]]; then
-    echo "[ERROR] Semua opsi berikut wajib diisi: --domain, --ssl-cert, --ssl-key, --proxy-pass." >&2
-    usage
-    exit 1
-fi
+[[ -n "${DOMAIN}" && -n "${SSL_CERTIFICATE}" &&
+   -n "${SSL_CERTIFICATE_KEY}" && -n "${PROXY_PASS}" ]] ||
+    { usage; die "Semua opsi --domain, --ssl-cert, --ssl-key, dan --proxy-pass wajib diisi."; }
 
-NGINX_SITES_AVAILABLE="/etc/nginx/sites-available"
-NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
+# =============================================================================
+# Derived paths
+# =============================================================================
 
 CONFIG_FILE="${NGINX_SITES_AVAILABLE}/${DOMAIN}.conf"
+ENABLED_LINK="${NGINX_SITES_ENABLED}/${DOMAIN}.conf"
 ACCESS_LOG="/var/log/nginx/${DOMAIN}.access.log"
 ERROR_LOG="/var/log/nginx/${DOMAIN}.error.log"
 
+TEMP_CONFIG=""
+CONFIG_CREATED=false
+LINK_CREATED=false
+
 # =============================================================================
-# Validation
+# Rollback only what this execution created
 # =============================================================================
 
-if ! command -v nginx >/dev/null 2>&1; then
-    echo "[ERROR] Nginx tidak ditemukan."
-    exit 1
+cleanup_on_error() {
+    local exit_code=$?
+
+    if [[ -n "${TEMP_CONFIG}" && -e "${TEMP_CONFIG}" ]]; then
+        rm -f -- "${TEMP_CONFIG}"
+    fi
+
+    if [[ "${LINK_CREATED}" == "true" && -L "${ENABLED_LINK}" ]]; then
+        rm -f -- "${ENABLED_LINK}"
+        log_warn "Symlink yang dibuat oleh script ini dihapus saat rollback."
+    fi
+
+    if [[ "${CONFIG_CREATED}" == "true" && -f "${CONFIG_FILE}" ]]; then
+        rm -f -- "${CONFIG_FILE}"
+        log_warn "File konfigurasi yang dibuat oleh script ini dihapus saat rollback."
+    fi
+
+    if [[ "${exit_code}" -ne 0 ]]; then
+        log_error "Pembuatan reverse proxy gagal (exit code ${exit_code})."
+        log_warn "Tidak ada konfigurasi virtual host lama yang ditimpa."
+    fi
+
+    exit "${exit_code}"
+}
+trap cleanup_on_error ERR
+
+# =============================================================================
+# Preconditions and validation
+# =============================================================================
+
+[[ "${EUID}" -eq 0 ]] || die "Script harus dijalankan sebagai root."
+
+command -v nginx >/dev/null 2>&1 || die "Nginx tidak ditemukan."
+command -v awk >/dev/null 2>&1 || die "awk tidak ditemukan."
+command -v grep >/dev/null 2>&1 || die "grep tidak ditemukan."
+
+# Restrict domain to DNS hostname characters to prevent Nginx config injection.
+if [[ ! "${DOMAIN}" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$ ]]; then
+    die "Format domain tidak valid: ${DOMAIN}"
 fi
 
-if [ ! -f "${SSL_CERTIFICATE}" ]; then
-    echo "[ERROR] SSL certificate tidak ditemukan:"
-    echo "        ${SSL_CERTIFICATE}"
-    exit 1
+# Reject whitespace and Nginx statement delimiters in values inserted into config.
+for value_name in SSL_CERTIFICATE SSL_CERTIFICATE_KEY PROXY_PASS; do
+    value="${!value_name}"
+    if [[ "${value}" =~ [[:space:]\;\{\}] ]]; then
+        die "Nilai ${value_name} mengandung karakter yang tidak diizinkan."
+    fi
+done
+
+[[ "${PROXY_PASS}" =~ ^https?://[^/[:space:]]+(/[^[:space:]]*)?$ ]] ||
+    die "Format --proxy-pass harus berupa URL http:// atau https:// yang valid."
+
+[[ -f "${SSL_CERTIFICATE}" && -r "${SSL_CERTIFICATE}" ]] ||
+    die "SSL certificate tidak ditemukan atau tidak dapat dibaca: ${SSL_CERTIFICATE}"
+
+[[ -f "${SSL_CERTIFICATE_KEY}" && -r "${SSL_CERTIFICATE_KEY}" ]] ||
+    die "SSL certificate key tidak ditemukan atau tidak dapat dibaca: ${SSL_CERTIFICATE_KEY}"
+
+[[ -f "${NGINX_SNIPPET}" ]] ||
+    die "Nginx proxy common snippet tidak ditemukan: ${NGINX_SNIPPET}"
+
+# Do not overwrite or replace any existing virtual host or enabled entry.
+if [[ -e "${CONFIG_FILE}" || -L "${CONFIG_FILE}" ]]; then
+    die "Konfigurasi sudah ada: ${CONFIG_FILE}. Script tidak akan menimpa konfigurasi existing."
 fi
 
-if [ ! -f "${SSL_CERTIFICATE_KEY}" ]; then
-    echo "[ERROR] SSL certificate key tidak ditemukan:"
-    echo "        ${SSL_CERTIFICATE_KEY}"
-    exit 1
-fi
-
-if [ ! -f "/etc/nginx/snippets/proxy-common.conf" ]; then
-    echo "[ERROR] Nginx proxy common snippet tidak ditemukan:"
-    echo "        /etc/nginx/snippets/proxy-common.conf"
-    exit 1
+if [[ -e "${ENABLED_LINK}" || -L "${ENABLED_LINK}" ]]; then
+    die "Site sudah ada di sites-enabled: ${ENABLED_LINK}. Tidak ada perubahan yang dilakukan."
 fi
 
 # =============================================================================
-# Directory
+# Verify JSON log format is already active exactly once
 # =============================================================================
 
-mkdir -p "${NGINX_SITES_AVAILABLE}"
-mkdir -p "${NGINX_SITES_ENABLED}"
+log_info "Memeriksa deklarasi ${JSON_LOG_FORMAT_NAME} pada konfigurasi Nginx aktif ..."
+
+NGINX_DUMP="$(nginx -T 2>&1)" ||
+    die "nginx -T gagal. Perbaiki konfigurasi Nginx yang ada sebelum membuat virtual host."
+
+JSON_FORMAT_COUNT="$(
+    printf '%s\n' "${NGINX_DUMP}" |
+        awk -v name="${JSON_LOG_FORMAT_NAME}" '
+            $1 == "log_format" && $2 == name { count++ }
+            END { print count+0 }
+        '
+)"
+
+if [[ "${JSON_FORMAT_COUNT}" -ne 1 ]]; then
+    die "Format ${JSON_LOG_FORMAT_NAME} harus terdefinisi tepat satu kali pada konfigurasi aktif (ditemukan: ${JSON_FORMAT_COUNT}). Tidak ada file yang dibuat."
+fi
+
+if ! printf '%s\n' "${NGINX_DUMP}" |
+    grep -Fq "# configuration file ${NGINX_JSON_LOG_FORMAT_FILE}:"; then
+    log_warn "File dedicated ${NGINX_JSON_LOG_FORMAT_FILE} tidak terdeteksi pada dump nginx -T."
+    log_info "Format JSON ditemukan pada konfigurasi aktif; melanjutkan tanpa mengubah include."
+fi
+
+log_ok "Format ${JSON_LOG_FORMAT_NAME} ditemukan tepat satu kali."
 
 # =============================================================================
-# Configuration
+# Prepare directories and configuration
 # =============================================================================
 
-cat > "${CONFIG_FILE}" <<EOF
+mkdir -p "${NGINX_SITES_AVAILABLE}" "${NGINX_SITES_ENABLED}"
+
+TEMP_CONFIG="$(mktemp "${NGINX_SITES_AVAILABLE}/.${DOMAIN}.conf.tmp.XXXXXX")"
+
+cat > "${TEMP_CONFIG}" <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
 
-    access_log ${ACCESS_LOG} reverser;
+    access_log ${ACCESS_LOG} ${JSON_LOG_FORMAT_NAME};
     error_log ${ERROR_LOG};
 
     return 301 https://\$host\$request_uri;
@@ -168,7 +279,7 @@ server {
     ssl_certificate ${SSL_CERTIFICATE};
     ssl_certificate_key ${SSL_CERTIFICATE_KEY};
 
-    access_log ${ACCESS_LOG} reverser;
+    access_log ${ACCESS_LOG} ${JSON_LOG_FORMAT_NAME};
     error_log ${ERROR_LOG};
 
     client_body_buffer_size 10M;
@@ -181,41 +292,84 @@ server {
 }
 EOF
 
-# =============================================================================
-# Enable Site
-# =============================================================================
+chmod 0644 "${TEMP_CONFIG}"
 
-if [ -L "${NGINX_SITES_ENABLED}/${DOMAIN}.conf" ] || \
-   [ -e "${NGINX_SITES_ENABLED}/${DOMAIN}.conf" ]; then
-    rm -f "${NGINX_SITES_ENABLED}/${DOMAIN}.conf"
-fi
+# Atomic placement. CONFIG_FILE was checked absent above.
+mv -- "${TEMP_CONFIG}" "${CONFIG_FILE}"
+TEMP_CONFIG=""
+CONFIG_CREATED=true
 
-ln -s "${CONFIG_FILE}" "${NGINX_SITES_ENABLED}/${DOMAIN}.conf"
+# Create the enabled symlink only after the available file exists.
+ln -s "${CONFIG_FILE}" "${ENABLED_LINK}"
+LINK_CREATED=true
 
 # =============================================================================
-# Nginx Validation
+# Nginx validation and post-check
 # =============================================================================
 
 echo
-echo "Testing Nginx configuration..."
+log_info "Testing Nginx configuration ..."
 
 nginx -t
 
+# Confirm this generated file is included in the active Nginx configuration.
+NGINX_DUMP_AFTER="$(nginx -T 2>&1)" ||
+    die "nginx -T gagal setelah pembuatan virtual host."
+
+if ! printf '%s\n' "${NGINX_DUMP_AFTER}" |
+    grep -Fq "# configuration file ${ENABLED_LINK}:" &&
+   ! printf '%s\n' "${NGINX_DUMP_AFTER}" |
+    grep -Fq "# configuration file ${CONFIG_FILE}:"; then
+    die "Virtual host baru tidak ditemukan pada konfigurasi aktif nginx -T."
+fi
+
+# Count the two access_log directives in the generated vhost's active dump.
+VHOST_JSON_LOG_COUNT="$(
+    printf '%s\n' "${NGINX_DUMP_AFTER}" |
+        awk -v path="${ACCESS_LOG}" -v format="${JSON_LOG_FORMAT_NAME}" '
+            $1 == "access_log" && $2 == path && $3 == format { count++ }
+            END { print count+0 }
+        '
+)"
+
+if [[ "${VHOST_JSON_LOG_COUNT}" -lt 2 ]]; then
+    die "Verifikasi access_log JSON gagal: diharapkan minimal 2 deklarasi, ditemukan ${VHOST_JSON_LOG_COUNT}."
+fi
+
+# Verify the generated vhost does not contain legacy reverser access logging.
+if grep -Eq '^[[:space:]]*access_log[[:space:]].*[[:space:]]reverser([[:space:]]*;|[[:space:]])' "${CONFIG_FILE}"; then
+    die "Ditemukan access_log reverser pada konfigurasi baru."
+fi
+
+log_ok "Konfigurasi Nginx valid."
+log_ok "Virtual host ditemukan pada konfigurasi aktif."
+log_ok "Dua deklarasi access_log menggunakan ${JSON_LOG_FORMAT_NAME}."
+log_ok "Tidak ada access_log reverser pada virtual host baru."
+
+# =============================================================================
+# Summary
+# =============================================================================
+
 echo
-echo "[OK] Reverse proxy configuration berhasil dibuat."
+echo "============================================================"
+echo " BREBES-WAF Reverse Proxy Configuration"
+echo "============================================================"
 echo
 echo "Domain       : ${DOMAIN}"
 echo "Proxy Pass   : ${PROXY_PASS}"
 echo "SSL Cert     : ${SSL_CERTIFICATE}"
 echo "SSL Key      : ${SSL_CERTIFICATE_KEY}"
 echo "Access Log   : ${ACCESS_LOG}"
+echo "Log Format   : ${JSON_LOG_FORMAT_NAME}"
 echo "Error Log    : ${ERROR_LOG}"
 echo "Config       : ${CONFIG_FILE}"
+echo "Site enabled : ${ENABLED_LINK}"
 echo
-echo "Site enabled : /etc/nginx/sites-enabled/${DOMAIN}.conf"
+echo "[ OK ] Reverse proxy configuration berhasil dibuat."
+echo "[ OK ] Konfigurasi virtual host existing tidak ditimpa."
 echo
 echo "Nginx belum di-reload."
-echo "Untuk menerapkan:"
+echo "Untuk menerapkan konfigurasi baru:"
 echo
 echo "    systemctl reload nginx"
 echo
