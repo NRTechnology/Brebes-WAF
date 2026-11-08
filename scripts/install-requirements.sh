@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.2
+# Version : 1.5.3
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -1390,12 +1390,35 @@ NGINX_DUMP="$(nginx -T 2>&1)" || {
     die "Gagal membaca effective Nginx configuration."
 }
 
-# Validate that ModSecurity is actually enabled in the effective configuration.
-if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
+# Use awk token matching against nginx -T output instead of a fragile
+# grep pipeline. nginx -T includes file headers and diagnostics on stderr;
+# only actual active directive lines are evaluated.
+effective_config_has_directive() {
+    local directive="$1"
+    local expected="$2"
+
+    awk -v directive="${directive}" -v expected="${expected}" '
+        /^[[:space:]]*#/ { next }
+        $1 == directive && $2 == expected { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' <<< "${NGINX_DUMP}"
+}
+
+effective_config_has_modsecurity_module() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        $1 == "load_module" && $0 ~ /ngx_http_modsecurity_module\.so/ {
+            found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    ' <<< "${NGINX_DUMP}"
+}
+
+# Validate ModSecurity directive in the effective configuration.
+if effective_config_has_directive "modsecurity" "on;"; then
     log_ok "ModSecurity aktif pada effective Nginx configuration."
 else
-    log_error "ModSecurity tidak aktif pada effective Nginx configuration."
+    log_error "Directive modsecurity on; tidak ditemukan pada effective Nginx configuration."
     log_info "Mencoba memperbaiki konfigurasi Nginx..."
 
     if grep -Eq '^[[:space:]]*modsecurity[[:space:]]+off;' "${NGINX_MAIN_CONF}"; then
@@ -1417,21 +1440,24 @@ else
         die "Gagal membaca effective Nginx configuration setelah perbaikan ModSecurity."
     }
 
-    if echo "${NGINX_DUMP}" |
-        grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
+    if effective_config_has_directive "modsecurity" "on;"; then
         log_ok "ModSecurity berhasil diaktifkan pada effective configuration."
     else
+        echo "${NGINX_DUMP}" | grep -nE 'modsecurity|configuration file|emerg|error' || true
         rollback_nginx_conf
-        die "ModSecurity tetap tidak aktif setelah perbaikan."
+        die "Directive modsecurity on; tetap tidak ditemukan setelah perbaikan."
     fi
 fi
 
-if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
+# Validate the exact ModSecurity rules file path.
+if effective_config_has_directive \
+    "modsecurity_rules_file" \
+    "/etc/nginx/modsecurity_includes.conf;"; then
     log_ok "BREBES-WAF ModSecurity include aktif."
 else
+    echo "${NGINX_DUMP}" | grep -nE 'modsecurity_rules_file|configuration file|emerg|error' || true
     rollback_nginx_conf
-    die "BREBES-WAF ModSecurity include belum terdeteksi."
+    die "BREBES-WAF ModSecurity include belum terdeteksi pada effective configuration."
 fi
 
 if echo "${NGINX_DUMP}" |
@@ -1450,10 +1476,10 @@ else
     die "Global JSON access_log belum terdeteksi pada effective configuration."
 fi
 
-if echo "${NGINX_DUMP}" |
-    grep -Eq 'load_module.*ngx_http_modsecurity_module'; then
+if effective_config_has_modsecurity_module; then
     log_ok "ModSecurity Nginx module loaded."
 else
+    echo "${NGINX_DUMP}" | grep -nE 'load_module|configuration file|emerg|error' || true
     rollback_nginx_conf
     die "ModSecurity Nginx module tidak terdeteksi pada effective configuration."
 fi
