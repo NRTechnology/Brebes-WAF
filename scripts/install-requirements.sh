@@ -21,7 +21,8 @@
 #   - ModSecurity configuration follows the CSIRT Lab Reverser baseline.
 #   - SecResponseBodyAccess is ON with MIME and 1 MiB limits for performance.
 #   - Audit logging uses Concurrent format with 15-day retention.
-#   - Nginx access logging uses BREBES-WAF JSON Lines (NDJSON).
+#   - Nginx JSON access logging is added alongside existing access logs.
+#   - Existing log_format reverser and access_log directives are preserved.
 #   - Existing configuration is backed up BEFORE modification.
 #   - Original configuration backup:
 #       /opt/Brebes-WAF/backup/orig/<YYYYMMDD-HHMMSS>/
@@ -216,7 +217,9 @@ configure_brebes_waf_json_access_log() {
     log_section "BREBES-WAF JSON Access Log Configuration"
     mkdir -p "${NGINX_CONF_D}" "$(dirname "${BREBES_WAF_ACCESS_LOG}")"
 
-    cat > "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
+    # Dedicated file: do not overwrite an existing file or unrelated log formats.
+    if [[ ! -e "${BREBES_WAF_LOG_FORMAT_FILE}" ]]; then
+        cat > "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
 ##
 # BREBES-WAF ACCESS LOG STANDARD v1.0
 # Format : JSON Lines (NDJSON)
@@ -257,25 +260,87 @@ log_format brebes_waf_json escape=json
     '"ssl_cipher":"$ssl_cipher"'
   '}';
 EOF
-    chmod 0644 "${BREBES_WAF_LOG_FORMAT_FILE}"
+        chmod 0644 "${BREBES_WAF_LOG_FORMAT_FILE}"
+        log_ok "Dedicated JSON log format file dibuat."
+    elif grep -Eq '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' "${BREBES_WAF_LOG_FORMAT_FILE}"; then
+        log_ok "JSON log format sudah ada; file dipertahankan."
+    else
+        log_warn "File ${BREBES_WAF_LOG_FORMAT_FILE} sudah ada tanpa brebes_waf_json."
+        log_info "Menambahkan format JSON tanpa menghapus isi yang sudah ada."
+        cat >> "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
+
+##
+# BREBES-WAF ACCESS LOG STANDARD v1.0
+# Format : JSON Lines (NDJSON)
+##
+log_format brebes_waf_json escape=json
+  '{'
+    '"@timestamp":"$time_iso8601",'
+    '"event_type":"http_access",'
+    '"observer_name":"$hostname",'
+    '"request_id":"$request_id",'
+    '"client_ip":"$remote_addr",'
+    '"xff":"$http_x_forwarded_for",'
+    '"host":"$host",'
+    '"server_name":"$server_name",'
+    '"server_addr":"$server_addr",'
+    '"server_port":"$server_port",'
+    '"scheme":"$scheme",'
+    '"method":"$request_method",'
+    '"uri":"$uri",'
+    '"protocol":"$server_protocol",'
+    '"status":$status,'
+    '"request_length":$request_length,'
+    '"body_bytes_sent":$body_bytes_sent,'
+    '"bytes_sent":$bytes_sent,'
+    '"referer":"$http_referer",'
+    '"user_agent":"$http_user_agent",'
+    '"request_time":$request_time,'
+    '"upstream_addr":"$upstream_addr",'
+    '"upstream_status":"$upstream_status",'
+    '"upstream_connect_time":"$upstream_connect_time",'
+    '"upstream_header_time":"$upstream_header_time",'
+    '"upstream_response_time":"$upstream_response_time",'
+    '"upstream_cache_status":"$upstream_cache_status",'
+    '"connection":"$connection",'
+    '"connection_requests":"$connection_requests",'
+    '"ssl_protocol":"$ssl_protocol",'
+    '"ssl_cipher":"$ssl_cipher"'
+  '}';
+EOF
+    fi
+
+    # Fail safely rather than creating duplicate log_format declarations.
+    OTHER_JSON_FORMATS="$(grep -RIlE '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
+        /etc/nginx --include='*.conf' 2>/dev/null | grep -Fvx "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+    [[ -z "${OTHER_JSON_FORMATS}" ]] || \
+        die "log_format brebes_waf_json sudah didefinisikan di file lain: ${OTHER_JSON_FORMATS}"
+
     touch "${BREBES_WAF_ACCESS_LOG}"
     chown www-data:adm "${BREBES_WAF_ACCESS_LOG}"
     chmod 0640 "${BREBES_WAF_ACCESS_LOG}"
 
-    if grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log([[:space:]]+reverser)?[[:space:]]*;' "${NGINX_MAIN_CONF}"; then
-        sed -i -E 's#^[[:space:]]*access_log[[:space:]]+/var/log/nginx/access\.log([[:space:]]+reverser)?[[:space:]]*;#        access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;#' "${NGINX_MAIN_CONF}"
-    elif grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;' "${NGINX_MAIN_CONF}"; then
-        log_ok "Global BREBES-WAF JSON access_log sudah dikonfigurasi."
+    # Preserve reverser and every existing access_log directive. Nginx supports
+    # multiple access_log directives in the same context.
+    JSON_ACCESS_LOG_PATTERN='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'
+    if grep -RqsE "${JSON_ACCESS_LOG_PATTERN}" /etc/nginx --include='*.conf' 2>/dev/null; then
+        log_ok "JSON access_log sudah dikonfigurasi; tidak menambahkan duplikasi."
     else
-        log_warn "Global access_log lama tidak ditemukan; menambahkan JSON access_log ke http {}."
+        log_info "Menambahkan JSON access_log tanpa mengubah access_log yang sudah ada."
         sed -i '/^[[:space:]]*http[[:space:]]*{/a\
 \
-        ##\
-        # BREBES-WAF JSON Access Log\
-        ##\
+        # BREBES-WAF JSON Access Log (additional; existing logs preserved)\
         access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;\
 ' "${NGINX_MAIN_CONF}"
     fi
+
+    # Explicitly verify the legacy reverser format has not been removed.
+    if grep -RqsE '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' /etc/nginx --include='*.conf' 2>/dev/null; then
+        log_ok "Legacy log_format reverser tetap tersedia."
+    else
+        log_warn "log_format reverser tidak ditemukan; tidak menghapus atau mengganti format log lain."
+    fi
+
     log_ok "JSON log format: ${BREBES_WAF_LOG_FORMAT_FILE}"
     log_ok "JSON access log: ${BREBES_WAF_ACCESS_LOG}"
 }
@@ -1202,6 +1267,38 @@ else
 fi
 
 # =============================================================================
+# Nginx reverser Log Format Compatibility Check
+# =============================================================================
+
+log_section "Nginx reverser Log Format Compatibility Check"
+
+if grep -RqsE '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' /etc/nginx --include='*.conf' 2>/dev/null; then
+    log_ok "log_format reverser ditemukan dan dipertahankan."
+else
+    log_warn "log_format reverser belum tersedia; menambahkan format kompatibilitas tanpa mengubah access_log lain."
+    sed -i '/^[[:space:]]*http[[:space:]]*{/a\
+\
+        ##\
+        # BREBES Reverse Proxy Log Format (legacy compatibility)\
+        ##\
+        log_format reverser\
+          '\\''$remote_addr '\\''\
+          '\\''[$time_local] '\\''\
+          '\\''"$request" '\\''\
+          '\\''$status '\\''\
+          '\\''$body_bytes_sent '\\''\
+          '\\''"$http_referer" '\\''\
+          '\\''"$http_user_agent" '\\''\
+          '\\''host="$host" '\\''\
+          '\\''xff="$http_x_forwarded_for" '\\''\
+          '\\''rt=$request_time '\\''\
+          '\\''urt=$upstream_response_time '\\''\
+          '\\''upstream="$upstream_addr" '\\'';\
+' "${NGINX_MAIN_CONF}"
+    log_ok "Legacy log_format reverser ditambahkan; access_log existing tetap utuh."
+fi
+
+# =============================================================================
 # BREBES-WAF JSON Access Log and ModSecurity Retention
 # =============================================================================
 
@@ -1324,7 +1421,7 @@ else
 fi
 
 if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\\.json[[:space:]]+brebes_waf_json[[:space:]]*;'; then
+    grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'; then
     log_ok "Global JSON access_log aktif pada effective configuration."
 else
     rollback_nginx_conf
