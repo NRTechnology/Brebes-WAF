@@ -4,7 +4,7 @@
 # Nginx Reverse Proxy Configuration Generator
 #
 # File    : scripts/create-reverse-proxy.sh
-# Version : 1.1.1
+# Version : 1.1.2
 #
 # Changes:
 #   - Uses brebes_waf_json instead of reverser for new virtual hosts.
@@ -14,7 +14,8 @@
 #   - Validates Nginx configuration and rolls back only files created by this
 #     execution if validation fails.
 #   - Verifies the active vhost using directives, not nginx -T header paths.
-#   - Uses EXIT-based rollback so explicit die/exit failures also clean up.
+#   - Registers EXIT-based rollback so explicit die/exit failures also clean up.
+#   - Fixes printf newline handling in post-generation nginx -T verification.
 #   - Does not reload or restart Nginx automatically.
 #
 # Existing virtual hosts and running configurations are not modified.
@@ -178,6 +179,11 @@ cleanup_on_error() {
     return "${exit_code}"
 }
 
+# Register rollback handler. On successful exit (status 0), it leaves the
+# generated configuration in place. On failure, it removes only artifacts
+# created by this execution.
+trap cleanup_on_error EXIT
+
 # =============================================================================
 # Preconditions and validation
 # =============================================================================
@@ -320,7 +326,7 @@ NGINX_DUMP_AFTER="$(nginx -T 2>&1)" ||
     die "nginx -T gagal setelah pembuatan virtual host."
 
 VHOST_SERVER_NAME_COUNT="$(
-    printf '%s\\n' "${NGINX_DUMP_AFTER}" |
+    printf '%s\n' "${NGINX_DUMP_AFTER}" |
         awk -v domain="${DOMAIN}" '
             $1 == "server_name" && $2 == domain { count++ }
             END { print count+0 }
@@ -332,7 +338,7 @@ if [[ "${VHOST_SERVER_NAME_COUNT}" -ne 2 ]]; then
 fi
 
 VHOST_JSON_LOG_COUNT="$(
-    printf '%s\\n' "${NGINX_DUMP_AFTER}" |
+    printf '%s\n' "${NGINX_DUMP_AFTER}" |
         awk -v path="${ACCESS_LOG}" -v format="${JSON_LOG_FORMAT_NAME}" '
             $1 == "access_log" && $2 == path && $3 == format { count++ }
             END { print count+0 }
