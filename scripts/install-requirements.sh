@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.0
+# Version : 1.5.1
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -187,9 +187,13 @@ on_error() {
 create_proxy_common_snippet() {
     log_section "Nginx Proxy Common Snippet"
 
+    local snippet_file="${NGINX_SNIPPETS}/proxy-common.conf"
+
     mkdir -p "${NGINX_SNIPPETS}"
 
-    cat > "${NGINX_SNIPPETS}/proxy-common.conf" <<'EOF'
+    if [[ ! -e "${snippet_file}" ]]; then
+        # First install only: create the standard snippet with request ID.
+        cat > "${snippet_file}" <<'EOF'
 proxy_http_version 1.1;
 
 proxy_set_header Host $host;
@@ -199,14 +203,30 @@ proxy_set_header X-Forwarded-Port $server_port;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Real-IP $remote_addr;
 
+# BREBES-WAF: propagate Nginx-generated request ID to the upstream.
+proxy_set_header X-Request-ID $request_id;
+
 # Minta backend mengirim response tanpa kompresi
 proxy_set_header Accept-Encoding "";
 EOF
+        chmod 0644 "${snippet_file}"
+        log_ok "Nginx proxy common snippet baru dibuat dengan X-Request-ID."
+    elif grep -Eq '^[[:space:]]*proxy_set_header[[:space:]]+X-Request-ID[[:space:]]+' "${snippet_file}"; then
+        # Existing custom value is deliberately preserved.
+        log_ok "X-Request-ID sudah ada; konfigurasi existing dipertahankan."
+    else
+        # Existing file: append only the missing directive. Do not rewrite
+        # or normalize any existing proxy settings, comments, owner or mode.
+        {
+            printf '\n'
+            printf '%s\n' '# BREBES-WAF: propagate Nginx-generated request ID to the upstream.'
+            printf '%s\n' 'proxy_set_header X-Request-ID $request_id;'
+        } >> "${snippet_file}"
+        log_ok "X-Request-ID ditambahkan tanpa mengubah isi snippet existing."
+    fi
 
-    chmod 0644 "${NGINX_SNIPPETS}/proxy-common.conf"
-
-    log_ok "Nginx proxy common snippet berhasil dibuat:"
-    echo "    ${NGINX_SNIPPETS}/proxy-common.conf"
+    log_ok "Nginx proxy common snippet:"
+    echo "    ${snippet_file}"
 }
 
 
