@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.3
+# Version : 1.5.4
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -237,7 +237,7 @@ configure_brebes_waf_json_access_log() {
     log_section "BREBES-WAF JSON Access Log Configuration"
     mkdir -p "${NGINX_CONF_D}" "$(dirname "${BREBES_WAF_ACCESS_LOG}")"
 
-    # Dedicated file: do not overwrite an existing file or unrelated log formats.
+    # Dedicated file: create the standard format only when it does not exist.
     if [[ ! -e "${BREBES_WAF_LOG_FORMAT_FILE}" ]]; then
         cat > "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
 ##
@@ -282,11 +282,9 @@ log_format brebes_waf_json escape=json
 EOF
         chmod 0644 "${BREBES_WAF_LOG_FORMAT_FILE}"
         log_ok "Dedicated JSON log format file dibuat."
-    elif grep -Eq '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' "${BREBES_WAF_LOG_FORMAT_FILE}"; then
-        log_ok "JSON log format sudah ada; file dipertahankan."
-    else
+    elif ! grep -Eq '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' "${BREBES_WAF_LOG_FORMAT_FILE}"; then
         log_warn "File ${BREBES_WAF_LOG_FORMAT_FILE} sudah ada tanpa brebes_waf_json."
-        log_info "Menambahkan format JSON tanpa menghapus isi yang sudah ada."
+        log_info "Menambahkan satu deklarasi format JSON tanpa menghapus isi yang sudah ada."
         cat >> "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
 
 ##
@@ -328,35 +326,74 @@ log_format brebes_waf_json escape=json
     '"ssl_cipher":"$ssl_cipher"'
   '}';
 EOF
+    else
+        log_ok "JSON log format sudah ada; isi format dipertahankan."
     fi
 
-    # Fail safely rather than creating duplicate log_format declarations.
-    OTHER_JSON_FORMATS="$(grep -RIlE '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
+    # The same log_format name must not be declared in another Nginx file.
+    local format_count
+    local other_json_formats
+    format_count="$(grep -Ec '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
+        "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+    [[ "${format_count}" -eq 1 ]] ||
+        die "Ditemukan ${format_count} deklarasi log_format brebes_waf_json dalam ${BREBES_WAF_LOG_FORMAT_FILE}; periksa manual, file tidak akan dinormalisasi otomatis."
+
+    other_json_formats="$(grep -RIlE '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
         /etc/nginx --include='*.conf' 2>/dev/null | grep -Fvx "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
-    [[ -z "${OTHER_JSON_FORMATS}" ]] || \
-        die "log_format brebes_waf_json sudah didefinisikan di file lain: ${OTHER_JSON_FORMATS}"
+    [[ -z "${other_json_formats}" ]] ||
+        die "log_format brebes_waf_json juga didefinisikan di file lain: ${other_json_formats}"
 
-    touch "${BREBES_WAF_ACCESS_LOG}"
-    chown www-data:adm "${BREBES_WAF_ACCESS_LOG}"
-    chmod 0640 "${BREBES_WAF_ACCESS_LOG}"
+    # Keep exactly one default JSON access_log directive in this dedicated file.
+    # Remove only exact duplicate directives; preserve every other line unchanged.
+    local access_log_count
+    local tmp_file
+    local access_log_regex='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;[[:space:]]*$'
 
-    # Keep the format declaration and its access_log consumer in the same
-    # conf.d file. Nginx parses configuration in order; putting access_log
-    # near the top of nginx.conf can reference a format that has not been
-    # declared yet (unknown log format).
-    JSON_ACCESS_LOG_PATTERN='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\\.json[[:space:]]+brebes_waf_json[[:space:]]*;'
-    if grep -Eq "${JSON_ACCESS_LOG_PATTERN}" "${BREBES_WAF_LOG_FORMAT_FILE}"; then
-        log_ok "JSON access_log sudah ada di dedicated conf.d file."
-    else
-        log_info "Menambahkan JSON access_log setelah deklarasi format JSON."
+    access_log_count="$(grep -Ec "${access_log_regex}" "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+
+    if [[ "${access_log_count}" -gt 1 ]]; then
+        tmp_file="$(mktemp "${BREBES_WAF_LOG_FORMAT_FILE}.XXXXXX")"
+        awk -v pattern="${access_log_regex}" '
+            $0 ~ pattern {
+                if (seen++) next
+            }
+            { print }
+        ' "${BREBES_WAF_LOG_FORMAT_FILE}" > "${tmp_file}"
+        cat "${tmp_file}" > "${BREBES_WAF_LOG_FORMAT_FILE}"
+        rm -f "${tmp_file}"
+        log_warn "Ditemukan ${access_log_count} deklarasi JSON access_log; duplikasi dibersihkan."
+        access_log_count=1
+    fi
+
+    if [[ "${access_log_count}" -eq 0 ]]; then
         cat >> "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
 
 # BREBES-WAF JSON Access Log (additional; existing logs preserved)
 access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;
 EOF
+        log_ok "Satu deklarasi default JSON access_log ditambahkan."
+    else
+        log_ok "Satu deklarasi default JSON access_log sudah tersedia."
     fi
 
-    # Explicitly verify the legacy reverser format has not been removed.
+    # Recheck invariants after normalization.
+    format_count="$(grep -Ec '^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)' \
+        "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+    access_log_count="$(grep -Ec "${access_log_regex}" "${BREBES_WAF_LOG_FORMAT_FILE}" || true)"
+
+    [[ "${format_count}" -eq 1 ]] ||
+        die "Validasi gagal: jumlah log_format brebes_waf_json bukan satu."
+    [[ "${access_log_count}" -eq 1 ]] ||
+        die "Validasi gagal: jumlah default JSON access_log bukan satu."
+
+    touch "${BREBES_WAF_ACCESS_LOG}"
+    chown www-data:adm "${BREBES_WAF_ACCESS_LOG}"
+    chmod 0640 "${BREBES_WAF_ACCESS_LOG}"
+
+    # The installer relies on nginx.conf's existing include /etc/nginx/conf.d/*.conf;
+    # it does not add a second include for this dedicated file.
+    log_ok "Dedicated JSON file dimuat melalui include conf.d/*.conf yang sudah ada."
+
     if grep -RqsE '^[[:space:]]*log_format[[:space:]]+reverser([[:space:]]|$)' /etc/nginx --include='*.conf' 2>/dev/null; then
         log_ok "Legacy log_format reverser tetap tersedia."
     else
@@ -366,7 +403,6 @@ EOF
     log_ok "JSON log format: ${BREBES_WAF_LOG_FORMAT_FILE}"
     log_ok "JSON access log: ${BREBES_WAF_ACCESS_LOG}"
 }
-
 # =============================================================================
 # ModSecurity Audit Log Retention
 # =============================================================================
