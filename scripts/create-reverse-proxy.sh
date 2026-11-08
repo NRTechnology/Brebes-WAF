@@ -4,7 +4,7 @@
 # Nginx Reverse Proxy Configuration Generator
 #
 # File    : scripts/create-reverse-proxy.sh
-# Version : 1.1.2
+# Version : 1.1.3
 #
 # Changes:
 #   - Uses brebes_waf_json instead of reverser for new virtual hosts.
@@ -16,6 +16,7 @@
 #   - Verifies the active vhost using directives, not nginx -T header paths.
 #   - Registers EXIT-based rollback so explicit die/exit failures also clean up.
 #   - Fixes printf newline handling in post-generation nginx -T verification.
+#   - Normalizes trailing semicolons when parsing Nginx directives with awk.
 #   - Does not reload or restart Nginx automatically.
 #
 # Existing virtual hosts and running configurations are not modified.
@@ -328,7 +329,11 @@ NGINX_DUMP_AFTER="$(nginx -T 2>&1)" ||
 VHOST_SERVER_NAME_COUNT="$(
     printf '%s\n' "${NGINX_DUMP_AFTER}" |
         awk -v domain="${DOMAIN}" '
-            $1 == "server_name" && $2 == domain { count++ }
+            $1 == "server_name" {
+                value = $2
+                sub(/;$/, "", value)
+                if (value == domain) count++
+            }
             END { print count+0 }
         '
 )"
@@ -340,7 +345,13 @@ fi
 VHOST_JSON_LOG_COUNT="$(
     printf '%s\n' "${NGINX_DUMP_AFTER}" |
         awk -v path="${ACCESS_LOG}" -v format="${JSON_LOG_FORMAT_NAME}" '
-            $1 == "access_log" && $2 == path && $3 == format { count++ }
+            $1 == "access_log" {
+                log_path = $2
+                log_format = $3
+                sub(/;$/, "", log_path)
+                sub(/;$/, "", log_format)
+                if (log_path == path && log_format == format) count++
+            }
             END { print count+0 }
         '
 )"
