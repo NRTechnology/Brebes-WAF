@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.1
+# Version : 1.5.2
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -340,18 +340,20 @@ EOF
     chown www-data:adm "${BREBES_WAF_ACCESS_LOG}"
     chmod 0640 "${BREBES_WAF_ACCESS_LOG}"
 
-    # Preserve reverser and every existing access_log directive. Nginx supports
-    # multiple access_log directives in the same context.
-    JSON_ACCESS_LOG_PATTERN='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'
-    if grep -RqsE "${JSON_ACCESS_LOG_PATTERN}" /etc/nginx --include='*.conf' 2>/dev/null; then
-        log_ok "JSON access_log sudah dikonfigurasi; tidak menambahkan duplikasi."
+    # Keep the format declaration and its access_log consumer in the same
+    # conf.d file. Nginx parses configuration in order; putting access_log
+    # near the top of nginx.conf can reference a format that has not been
+    # declared yet (unknown log format).
+    JSON_ACCESS_LOG_PATTERN='^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\\.json[[:space:]]+brebes_waf_json[[:space:]]*;'
+    if grep -Eq "${JSON_ACCESS_LOG_PATTERN}" "${BREBES_WAF_LOG_FORMAT_FILE}"; then
+        log_ok "JSON access_log sudah ada di dedicated conf.d file."
     else
-        log_info "Menambahkan JSON access_log tanpa mengubah access_log yang sudah ada."
-        sed -i '/^[[:space:]]*http[[:space:]]*{/a\
-\
-        # BREBES-WAF JSON Access Log (additional; existing logs preserved)\
-        access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;\
-' "${NGINX_MAIN_CONF}"
+        log_info "Menambahkan JSON access_log setelah deklarasi format JSON."
+        cat >> "${BREBES_WAF_LOG_FORMAT_FILE}" <<'EOF'
+
+# BREBES-WAF JSON Access Log (additional; existing logs preserved)
+access_log /var/log/nginx/brebes-waf/access.json brebes_waf_json;
+EOF
     fi
 
     # Explicitly verify the legacy reverser format has not been removed.
