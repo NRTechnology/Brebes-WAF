@@ -4,7 +4,7 @@
 # Nginx Reverse Proxy Configuration Generator
 #
 # File    : scripts/create-reverse-proxy.sh
-# Version : 1.1.0
+# Version : 1.1.1
 #
 # Changes:
 #   - Uses brebes_waf_json instead of reverser for new virtual hosts.
@@ -13,6 +13,8 @@
 #     configuration before generating a virtual host.
 #   - Validates Nginx configuration and rolls back only files created by this
 #     execution if validation fails.
+#   - Verifies the active vhost using directives, not nginx -T header paths.
+#   - Uses EXIT-based rollback so explicit die/exit failures also clean up.
 #   - Does not reload or restart Nginx automatically.
 #
 # Existing virtual hosts and running configurations are not modified.
@@ -152,29 +154,29 @@ LINK_CREATED=false
 
 cleanup_on_error() {
     local exit_code=$?
+    trap - EXIT
 
     if [[ -n "${TEMP_CONFIG}" && -e "${TEMP_CONFIG}" ]]; then
         rm -f -- "${TEMP_CONFIG}"
     fi
 
-    if [[ "${LINK_CREATED}" == "true" && -L "${ENABLED_LINK}" ]]; then
-        rm -f -- "${ENABLED_LINK}"
-        log_warn "Symlink yang dibuat oleh script ini dihapus saat rollback."
-    fi
-
-    if [[ "${CONFIG_CREATED}" == "true" && -f "${CONFIG_FILE}" ]]; then
-        rm -f -- "${CONFIG_FILE}"
-        log_warn "File konfigurasi yang dibuat oleh script ini dihapus saat rollback."
-    fi
-
     if [[ "${exit_code}" -ne 0 ]]; then
+        if [[ "${LINK_CREATED}" == "true" && -L "${ENABLED_LINK}" ]]; then
+            rm -f -- "${ENABLED_LINK}"
+            log_warn "Symlink yang dibuat oleh script ini dihapus saat rollback."
+        fi
+
+        if [[ "${CONFIG_CREATED}" == "true" && -f "${CONFIG_FILE}" ]]; then
+            rm -f -- "${CONFIG_FILE}"
+            log_warn "File konfigurasi yang dibuat oleh script ini dihapus saat rollback."
+        fi
+
         log_error "Pembuatan reverse proxy gagal (exit code ${exit_code})."
         log_warn "Tidak ada konfigurasi virtual host lama yang ditimpa."
     fi
 
-    exit "${exit_code}"
+    return "${exit_code}"
 }
-trap cleanup_on_error ERR
 
 # =============================================================================
 # Preconditions and validation
@@ -312,28 +314,33 @@ log_info "Testing Nginx configuration ..."
 
 nginx -t
 
-# Confirm this generated file is included in the active Nginx configuration.
+# Verify the vhost by effective directives, not by nginx -T comment header path.
+# nginx -T may report a symlink path or a resolved target depending on include layout.
 NGINX_DUMP_AFTER="$(nginx -T 2>&1)" ||
     die "nginx -T gagal setelah pembuatan virtual host."
 
-if ! printf '%s\n' "${NGINX_DUMP_AFTER}" |
-    grep -Fq "# configuration file ${ENABLED_LINK}:" &&
-   ! printf '%s\n' "${NGINX_DUMP_AFTER}" |
-    grep -Fq "# configuration file ${CONFIG_FILE}:"; then
-    die "Virtual host baru tidak ditemukan pada konfigurasi aktif nginx -T."
+VHOST_SERVER_NAME_COUNT="$(
+    printf '%s\\n' "${NGINX_DUMP_AFTER}" |
+        awk -v domain="${DOMAIN}" '
+            $1 == "server_name" && $2 == domain { count++ }
+            END { print count+0 }
+        '
+)"
+
+if [[ "${VHOST_SERVER_NAME_COUNT}" -ne 2 ]]; then
+    die "Verifikasi virtual host gagal: server_name ${DOMAIN} ditemukan ${VHOST_SERVER_NAME_COUNT} kali pada nginx -T (diharapkan 2)."
 fi
 
-# Count the two access_log directives in the generated vhost's active dump.
 VHOST_JSON_LOG_COUNT="$(
-    printf '%s\n' "${NGINX_DUMP_AFTER}" |
+    printf '%s\\n' "${NGINX_DUMP_AFTER}" |
         awk -v path="${ACCESS_LOG}" -v format="${JSON_LOG_FORMAT_NAME}" '
             $1 == "access_log" && $2 == path && $3 == format { count++ }
             END { print count+0 }
         '
 )"
 
-if [[ "${VHOST_JSON_LOG_COUNT}" -lt 2 ]]; then
-    die "Verifikasi access_log JSON gagal: diharapkan minimal 2 deklarasi, ditemukan ${VHOST_JSON_LOG_COUNT}."
+if [[ "${VHOST_JSON_LOG_COUNT}" -ne 2 ]]; then
+    die "Verifikasi access_log JSON gagal: diharapkan tepat 2 deklarasi, ditemukan ${VHOST_JSON_LOG_COUNT}."
 fi
 
 # Verify the generated vhost does not contain legacy reverser access logging.
