@@ -22,7 +22,9 @@
 #   - SecResponseBodyAccess is ON with MIME and 1 MiB limits for performance.
 #   - Audit logging uses Concurrent format with 15-day retention.
 #   - Nginx JSON access logging is added alongside existing access logs.
-#   - Existing log_format reverser and access_log directives are preserved.
+#   - The legacy log_format reverser declaration is created when missing.
+#   - No access_log directive using the reverser format is created or changed.
+#   - Existing access_log directives (including global access.log) are preserved.
 #   - Existing configuration is backed up BEFORE modification.
 #   - Original configuration backup:
 #       /opt/Brebes-WAF/backup/orig/<YYYYMMDD-HHMMSS>/
@@ -1327,6 +1329,10 @@ fi
 # =============================================================================
 # Nginx reverser Log Format Compatibility Check
 # =============================================================================
+# This section manages ONLY the log_format reverser declaration.
+# It does not create or modify any access_log directive. In particular,
+# global `access_log /var/log/nginx/access.log;` and existing vhost access_log
+# directives are left untouched; no `access_log ... reverser;` is added.
 
 log_section "Nginx reverser Log Format Compatibility Check"
 
@@ -1796,11 +1802,17 @@ RUNTIME_NGINX_DUMP="$(nginx -T 2>&1)" || {
     die "Tidak dapat membaca runtime Nginx configuration."
 }
 
-if echo "${RUNTIME_NGINX_DUMP}" |
-    grep -Eq 'load_module.*ngx_http_modsecurity_module'; then
+if awk '
+    /^[[:space:]]*#/ { next }
+    $1 == "load_module" && $0 ~ /ngx_http_modsecurity_module[.]so/ {
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }
+' <<< "${RUNTIME_NGINX_DUMP}"; then
     log_ok "Runtime: ModSecurity module loaded."
 else
-    die "Runtime: ModSecurity module tidak loaded."
+    echo "${RUNTIME_NGINX_DUMP}" | grep -nE 'load_module|ModSecurity-nginx|configuration file|emerg|error' || true
+    die "Runtime: ModSecurity module tidak terdeteksi pada effective runtime configuration."
 fi
 
 if echo "${RUNTIME_NGINX_DUMP}" |
