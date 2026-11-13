@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.6
+# Version : 1.5.7
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -346,7 +346,7 @@ EOF
         /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
             in_format = 1
         }
-        in_format && index($0, "\\"integration\\"") {
+        in_format && index($0, "\"integration\"") {
             malformed = q "[[:space:]]*,[[:space:]]*$"
             sub(malformed, "," q, $0)
         }
