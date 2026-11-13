@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.4
+# Version : 1.5.5
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -249,6 +249,7 @@ configure_brebes_waf_json_access_log() {
 ##
 log_format brebes_waf_json escape=json
   '{'
+    '"integration":"brebes-waf",'
     '"@timestamp":"$time_iso8601",'
     '"event_type":"http_access",'
     '"observer_name":"$hostname",'
@@ -295,6 +296,7 @@ EOF
 ##
 log_format brebes_waf_json escape=json
   '{'
+    '"integration":"brebes-waf",'
     '"@timestamp":"$time_iso8601",'
     '"event_type":"http_access",'
     '"observer_name":"$hostname",'
@@ -329,8 +331,70 @@ log_format brebes_waf_json escape=json
   '}';
 EOF
     else
-        log_ok "JSON log format sudah ada; isi format dipertahankan."
+        log_ok "JSON log format sudah ada; memeriksa field integration."
     fi
+
+    # Ensure the existing brebes_waf_json declaration carries the Wazuh
+    # integration identity. Only this log_format block is inspected/modified.
+    local format_block
+    local integration_line
+    local tmp_format_file
+
+    format_block="$(awk '
+        /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
+            capture = 1
+        }
+        capture { print }
+        capture && /;[[:space:]]*$/ { exit }
+    ' "${BREBES_WAF_LOG_FORMAT_FILE}")"
+
+    [[ -n "${format_block}" ]] ||
+        die "Deklarasi log_format brebes_waf_json tidak dapat dibaca."
+
+    if grep -Eq '"integration"[[:space:]]*:[[:space:]]*"brebes-waf"' <<< "${format_block}"; then
+        log_ok 'Field JSON integration=brebes-waf sudah tersedia.'
+    elif grep -Eq '"integration"[[:space:]]*:' <<< "${format_block}"; then
+        die 'Field integration sudah ada tetapi nilainya bukan brebes-waf. Konfigurasi dipertahankan; periksa manual.'
+    else
+        integration_line="$(printf "    '%s'," '"integration":"brebes-waf"')"
+        tmp_format_file="$(mktemp "${BREBES_WAF_LOG_FORMAT_FILE}.XXXXXX")"
+
+        if ! awk -v field="${integration_line}" '
+            /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
+                in_format = 1
+            }
+            in_format && !inserted && index($0, "{") > 0 {
+                print
+                print field
+                inserted = 1
+                next
+            }
+            { print }
+            in_format && /;[[:space:]]*$/ { in_format = 0 }
+            END {
+                if (!inserted) exit 2
+            }
+        ' "${BREBES_WAF_LOG_FORMAT_FILE}" > "${tmp_format_file}"; then
+            rm -f "${tmp_format_file}"
+            die "Gagal menyisipkan field integration ke log_format brebes_waf_json."
+        fi
+
+        cat "${tmp_format_file}" > "${BREBES_WAF_LOG_FORMAT_FILE}"
+        rm -f "${tmp_format_file}"
+        log_ok 'Field JSON integration=brebes-waf berhasil ditambahkan ke format existing.'
+    fi
+
+    # Verify the field after creation/migration.
+    format_block="$(awk '
+        /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
+            capture = 1
+        }
+        capture { print }
+        capture && /;[[:space:]]*$/ { exit }
+    ' "${BREBES_WAF_LOG_FORMAT_FILE}")"
+
+    grep -Eq '"integration"[[:space:]]*:[[:space:]]*"brebes-waf"' <<< "${format_block}" ||
+        die 'Validasi gagal: JSON integration=brebes-waf tidak ditemukan pada log_format.'
 
     # The same log_format name must not be declared in another Nginx file.
     local format_count
@@ -1508,6 +1572,21 @@ if echo "${NGINX_DUMP}" |
 else
     rollback_nginx_conf
     die "log_format brebes_waf_json belum terdeteksi."
+fi
+
+EFFECTIVE_BREBES_JSON_FORMAT="$(awk '
+    /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
+        capture = 1
+    }
+    capture { print }
+    capture && /;[[:space:]]*$/ { exit }
+' <<< "${NGINX_DUMP}")"
+
+if grep -Eq '"integration"[[:space:]]*:[[:space:]]*"brebes-waf"' <<< "${EFFECTIVE_BREBES_JSON_FORMAT}"; then
+    log_ok 'Effective JSON log_format memiliki integration=brebes-waf.'
+else
+    rollback_nginx_conf
+    die 'Field integration=brebes-waf tidak ditemukan pada effective JSON log_format.'
 fi
 
 if echo "${NGINX_DUMP}" |
