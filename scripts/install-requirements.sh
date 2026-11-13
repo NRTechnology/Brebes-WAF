@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.5
+# Version : 1.5.6
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -334,12 +334,30 @@ EOF
         log_ok "JSON log format sudah ada; memeriksa field integration."
     fi
 
-    # Ensure the existing brebes_waf_json declaration carries the Wazuh
-    # integration identity. Only this log_format block is inspected/modified.
+    # Repair the malformed integration line produced by v1.5.5:
+    # the comma must be inside the quoted Nginx log_format string.
+    # This is a narrow migration; all other lines remain unchanged.
     local format_block
     local integration_line
     local tmp_format_file
 
+    tmp_format_file="$(mktemp "${BREBES_WAF_LOG_FORMAT_FILE}.XXXXXX")"
+    awk -v q="'" '
+        /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
+            in_format = 1
+        }
+        in_format && index($0, "\\"integration\\"") {
+            malformed = q "[[:space:]]*,[[:space:]]*$"
+            sub(malformed, "," q, $0)
+        }
+        { print }
+        in_format && /;[[:space:]]*$/ { in_format = 0 }
+    ' "${BREBES_WAF_LOG_FORMAT_FILE}" > "${tmp_format_file}"
+    cat "${tmp_format_file}" > "${BREBES_WAF_LOG_FORMAT_FILE}"
+    rm -f "${tmp_format_file}"
+
+    # Ensure the existing brebes_waf_json declaration carries the Wazuh
+    # integration identity. Only this log_format block is inspected/modified.
     format_block="$(awk '
         /^[[:space:]]*log_format[[:space:]]+brebes_waf_json([[:space:]]|$)/ {
             capture = 1
@@ -356,7 +374,8 @@ EOF
     elif grep -Eq '"integration"[[:space:]]*:' <<< "${format_block}"; then
         die 'Field integration sudah ada tetapi nilainya bukan brebes-waf. Konfigurasi dipertahankan; periksa manual.'
     else
-        integration_line="$(printf "    '%s'," '"integration":"brebes-waf"')"
+        # The comma belongs inside the quoted JSON string.
+        integration_line="$(printf "    '%s'" '"integration":"brebes-waf",')"
         tmp_format_file="$(mktemp "${BREBES_WAF_LOG_FORMAT_FILE}.XXXXXX")"
 
         if ! awk -v field="${integration_line}" '
