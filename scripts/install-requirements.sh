@@ -1929,10 +1929,20 @@ else
     die "Runtime: ModSecurity module tidak terdeteksi pada effective runtime configuration."
 fi
 
-if echo "${RUNTIME_NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity[[:space:]]+on;'; then
+# Use the same token-based validation as the Effective Nginx Configuration
+# check above. This avoids a second, inconsistent grep-based detector.
+if awk '
+    /^[[:space:]]*#/ { next }
+    $1 == "modsecurity" && $2 == "on;" {
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }
+' <<< "${RUNTIME_NGINX_DUMP}"; then
     log_ok "Runtime: ModSecurity ON."
 else
+    log_error "Runtime: directive modsecurity on; tidak ditemukan."
+    log_info "Directive ModSecurity yang terlihat pada runtime configuration:"
+    grep -nE '^[[:space:]]*modsecurity[[:space:]]+' <<< "${RUNTIME_NGINX_DUMP}" || true
     die "Runtime: ModSecurity OFF / tidak ditemukan."
 fi
 
