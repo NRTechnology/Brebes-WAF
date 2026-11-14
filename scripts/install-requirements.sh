@@ -1474,8 +1474,11 @@ echo "--- BREBES-WAF JSON log format ---"
 cat "${BREBES_WAF_LOG_FORMAT_FILE}"
 
 echo
-echo "--- Nginx global JSON access_log ---"
-grep -E '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;' "${NGINX_MAIN_CONF}" || true
+echo "--- BREBES-WAF JSON access_log declaration ---"
+# The directive is intentionally stored in conf.d, not nginx.conf.
+# Display the dedicated file so the review output reflects the real location.
+grep -E '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;' \
+    "${BREBES_WAF_LOG_FORMAT_FILE}" || true
 
 echo
 echo "--- ModSecurity retention ---"
@@ -1608,12 +1611,25 @@ else
     die 'Field integration=brebes-waf tidak ditemukan pada effective JSON log_format.'
 fi
 
-if echo "${NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*access_log[[:space:]]+/var/log/nginx/brebes-waf/access\.json[[:space:]]+brebes_waf_json[[:space:]]*;'; then
-    log_ok "Global JSON access_log aktif pada effective configuration."
+# nginx -T prints the complete effective configuration, including files
+# loaded through include directives. Match directive tokens rather than
+# relying on a fragile grep expression over the combined diagnostic output.
+if awk -v log_path="${BREBES_WAF_ACCESS_LOG}" '
+    /^[[:space:]]*#/ { next }
+    $1 == "access_log" &&
+    $2 == log_path &&
+    $3 == "brebes_waf_json;" {
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }
+' <<< "${NGINX_DUMP}"; then
+    log_ok "BREBES-WAF JSON access_log aktif pada effective configuration."
 else
+    log_error "BREBES-WAF JSON access_log tidak ditemukan pada effective configuration."
+    log_info "Deklarasi yang ditemukan pada nginx -T (jika ada):"
+    grep -n -B 3 -A 3 -F "${BREBES_WAF_ACCESS_LOG}" <<< "${NGINX_DUMP}" || true
     rollback_nginx_conf
-    die "Global JSON access_log belum terdeteksi pada effective configuration."
+    die "BREBES-WAF JSON access_log belum terdeteksi pada effective configuration."
 fi
 
 if effective_config_has_modsecurity_module; then
