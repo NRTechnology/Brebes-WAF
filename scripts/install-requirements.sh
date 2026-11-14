@@ -5,7 +5,7 @@
 # First-Time Installation & Deployment Script
 #
 # File    : scripts/install-requirements.sh
-# Version : 1.5.7
+# Version : 1.5.9
 # Author  : Brebes CSIRT
 #
 # Purpose:
@@ -1956,10 +1956,21 @@ else
     die "Runtime: Audit storage tidak sesuai: ${RUNTIME_AUDIT_DIR_OWNER} / ${RUNTIME_AUDIT_DIR_MODE}."
 fi
 
-if echo "${RUNTIME_NGINX_DUMP}" |
-    grep -Eq '^[[:space:]]*modsecurity_rules_file[[:space:]]+/etc/nginx/modsecurity_includes\.conf;'; then
+# Match the directive by tokens, consistently with the earlier effective
+# configuration check. This avoids regex escaping differences between checks.
+if awk '
+    /^[[:space:]]*#/ { next }
+    $1 == "modsecurity_rules_file" &&
+    $2 == "/etc/nginx/modsecurity_includes.conf;" {
+        found = 1
+    }
+    END { exit(found ? 0 : 1) }
+' <<< "${RUNTIME_NGINX_DUMP}"; then
     log_ok "Runtime: BREBES-WAF rules include loaded."
 else
+    log_error "Runtime: modsecurity_rules_file tidak ditemukan."
+    log_info "Directive yang terlihat pada runtime configuration:"
+    grep -nE '^[[:space:]]*modsecurity_rules_file[[:space:]]+' <<< "${RUNTIME_NGINX_DUMP}" || true
     die "Runtime: BREBES-WAF rules include tidak ditemukan."
 fi
 
