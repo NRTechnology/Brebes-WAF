@@ -4,7 +4,7 @@
 # Nginx Reverse Proxy Configuration Generator
 #
 # File    : scripts/create-reverse-proxy.sh
-# Version : 1.1.3
+# Version : 1.2.0
 #
 # Changes:
 #   - Uses brebes_waf_json instead of reverser for new virtual hosts.
@@ -18,6 +18,10 @@
 #   - Fixes printf newline handling in post-generation nginx -T verification.
 #   - Normalizes trailing semicolons when parsing Nginx directives with awk.
 #   - Does not reload or restart Nginx automatically.
+#   - Optionally registers the new vhost access/error logs in Wazuh Agent
+#     when the Agent binary, service unit, and ossec.conf are available.
+#   - Wazuh integration is idempotent, backed up, validated, and non-fatal
+#     to reverse-proxy creation when Wazuh is absent or integration fails.
 #
 # Existing virtual hosts and running configurations are not modified.
 # =============================================================================
@@ -33,6 +37,12 @@ NGINX_SITES_ENABLED="/etc/nginx/sites-enabled"
 NGINX_SNIPPET="/etc/nginx/snippets/proxy-common.conf"
 JSON_LOG_FORMAT_NAME="brebes_waf_json"
 NGINX_JSON_LOG_FORMAT_FILE="/etc/nginx/conf.d/brebes-waf-log-format.conf"
+
+# Optional Wazuh Agent integration. This is deliberately local to the
+# endpoint; no Manager enrollment, group, or identity settings are changed.
+WAZUH_AGENT_BIN="/var/ossec/bin/wazuh-agentd"
+WAZUH_AGENT_CONFIG="/var/ossec/etc/ossec.conf"
+WAZUH_AGENT_SERVICE="wazuh-agent"
 
 # =============================================================================
 # Colors and helpers
@@ -89,6 +99,171 @@ Catatan:
   - Konfigurasi virtual host yang sudah ada tidak akan ditimpa.
   - Nginx tidak di-reload otomatis.
 EOF
+}
+
+# =============================================================================
+# Optional Wazuh Agent log registration
+# =============================================================================
+
+register_wazuh_logs() {
+    local access_exists=false
+    local error_exists=false
+    local access_format_ok=false
+    local error_format_ok=false
+    local was_active=false
+    local backup_file=""
+    local temp_ossec=""
+    local awk_status=0
+
+    log_info "Memeriksa integrasi Wazuh Agent ..."
+
+    # Agent is considered available only when its executable, configuration,
+    # and systemd unit are all present. Absence must never block vhost creation.
+    if [[ ! -x "${WAZUH_AGENT_BIN}" ]]; then
+        log_info "Wazuh Agent tidak ditemukan; integrasi log dilewati."
+        return 0
+    fi
+
+    if [[ ! -f "${WAZUH_AGENT_CONFIG}" || ! -r "${WAZUH_AGENT_CONFIG}" ]]; then
+        log_warn "Binary Wazuh Agent ditemukan, tetapi ossec.conf tidak tersedia/dapat dibaca."
+        log_warn "Integrasi Wazuh dilewati; reverse proxy tetap dibuat."
+        return 0
+    fi
+
+    if ! command -v systemctl >/dev/null 2>&1 ||
+       ! systemctl cat "${WAZUH_AGENT_SERVICE}" >/dev/null 2>&1; then
+        log_warn "Wazuh Agent terdeteksi, tetapi unit systemd tidak ditemukan."
+        log_warn "Integrasi Wazuh dilewati; reverse proxy tetap dibuat."
+        return 0
+    fi
+
+    log_ok "Wazuh Agent dan ossec.conf ditemukan."
+
+    # Check exact locations. Existing entries are retained. If an exact path
+    # exists with a conflicting format, do not silently rewrite user config.
+    if grep -Fq "<location>${ACCESS_LOG}</location>" "${WAZUH_AGENT_CONFIG}"; then
+        access_exists=true
+        if awk -v p="${ACCESS_LOG}" '
+            /<localfile>/ { in_local=1; loc=0; fmt=0 }
+            in_local && index($0, "<location>" p "</location>") { loc=1 }
+            in_local && /<log_format>json</ { fmt=1 }
+            in_local && /<\/localfile>/ { if (loc && fmt) ok=1; in_local=0 }
+            END { exit(ok ? 0 : 1) }
+        ' "${WAZUH_AGENT_CONFIG}"; then
+            access_format_ok=true
+        fi
+    fi
+
+    if grep -Fq "<location>${ERROR_LOG}</location>" "${WAZUH_AGENT_CONFIG}"; then
+        error_exists=true
+        if awk -v p="${ERROR_LOG}" '
+            /<localfile>/ { in_local=1; loc=0; fmt=0 }
+            in_local && index($0, "<location>" p "</location>") { loc=1 }
+            in_local && /<log_format>syslog</ { fmt=1 }
+            in_local && /<\/localfile>/ { if (loc && fmt) ok=1; in_local=0 }
+            END { exit(ok ? 0 : 1) }
+        ' "${WAZUH_AGENT_CONFIG}"; then
+            error_format_ok=true
+        fi
+    fi
+
+    if [[ "${access_exists}" == "true" && "${access_format_ok}" != "true" ]]; then
+        log_warn "Access log sudah terdaftar dengan format berbeda/tidak dikenal: ${ACCESS_LOG}"
+        log_warn "Tidak mengubah entri existing; integrasi Wazuh dilewati."
+        return 0
+    fi
+    if [[ "${error_exists}" == "true" && "${error_format_ok}" != "true" ]]; then
+        log_warn "Error log sudah terdaftar dengan format berbeda/tidak dikenal: ${ERROR_LOG}"
+        log_warn "Tidak mengubah entri existing; integrasi Wazuh dilewati."
+        return 0
+    fi
+
+    if [[ "${access_exists}" == "true" && "${error_exists}" == "true" ]]; then
+        log_ok "Kedua log domain ini sudah terdaftar di ossec.conf; tidak ada duplikasi."
+        return 0
+    fi
+
+    # Keep backup and temporary file in the same directory for atomic rename.
+    backup_file="${WAZUH_AGENT_CONFIG}.pre-brebes-waf-${DOMAIN}.$(date +%Y%m%d-%H%M%S)"
+    temp_ossec="$(mktemp "${WAZUH_AGENT_CONFIG}.tmp.XXXXXX")" || {
+        log_warn "Tidak dapat membuat file sementara untuk ossec.conf."
+        return 0
+    }
+
+    if ! cp -a -- "${WAZUH_AGENT_CONFIG}" "${backup_file}"; then
+        rm -f -- "${temp_ossec}"
+        log_warn "Backup ossec.conf gagal; integrasi Wazuh dilewati."
+        return 0
+    fi
+
+    # Insert only missing localfile blocks immediately before </ossec_config>.
+    # The existing file content and all unrelated localfile entries are kept.
+    if ! awk \
+        -v add_access="$([[ "${access_exists}" == "false" ]] && echo 1 || echo 0)" \
+        -v add_error="$([[ "${error_exists}" == "false" ]] && echo 1 || echo 0)" \
+        -v access="${ACCESS_LOG}" \
+        -v error="${ERROR_LOG}" '
+        /<\/ossec_config>/ {
+            if (add_access) {
+                print "  <localfile>"
+                print "    <location>" access "</location>"
+                print "    <log_format>json</log_format>"
+                print "  </localfile>"
+            }
+            if (add_error) {
+                print "  <localfile>"
+                print "    <location>" error "</location>"
+                print "    <log_format>syslog</log_format>"
+                print "  </localfile>"
+            }
+            inserted=1
+        }
+        { print }
+        END { if (!inserted) exit 42 }
+    ' "${WAZUH_AGENT_CONFIG}" > "${temp_ossec}"; then
+        rm -f -- "${temp_ossec}"
+        log_warn "Tidak ditemukan penutup </ossec_config> atau penyisipan gagal."
+        log_warn "ossec.conf tidak diubah; reverse proxy tetap dibuat."
+        return 0
+    fi
+
+    chmod --reference="${WAZUH_AGENT_CONFIG}" "${temp_ossec}" 2>/dev/null || chmod 0640 "${temp_ossec}"
+    chown --reference="${WAZUH_AGENT_CONFIG}" "${temp_ossec}" 2>/dev/null || true
+
+    if ! mv -f -- "${temp_ossec}" "${WAZUH_AGENT_CONFIG}"; then
+        rm -f -- "${temp_ossec}"
+        log_warn "Tidak dapat menerapkan ossec.conf; reverse proxy tetap dibuat."
+        return 0
+    fi
+
+    # Validate the updated Agent configuration before attempting a restart.
+    if ! "${WAZUH_AGENT_BIN}" -t >/dev/null 2>&1; then
+        cp -a -- "${backup_file}" "${WAZUH_AGENT_CONFIG}"
+        log_warn "Validasi konfigurasi Wazuh gagal; ossec.conf dipulihkan dari backup."
+        log_warn "Reverse proxy tetap dibuat tanpa integrasi log Wazuh."
+        return 0
+    fi
+
+    log_ok "Konfigurasi Wazuh valid."
+    log_info "Backup ossec.conf: ${backup_file}"
+
+    if systemctl is-active --quiet "${WAZUH_AGENT_SERVICE}"; then
+        was_active=true
+    fi
+
+    if [[ "${was_active}" == "true" ]]; then
+        if systemctl restart "${WAZUH_AGENT_SERVICE}"; then
+            log_ok "Wazuh Agent berhasil direstart; access/error log domain terdaftar."
+        else
+            cp -a -- "${backup_file}" "${WAZUH_AGENT_CONFIG}"
+            systemctl restart "${WAZUH_AGENT_SERVICE}" >/dev/null 2>&1 || true
+            log_warn "Restart Wazuh Agent gagal; konfigurasi ossec.conf dipulihkan."
+            log_warn "Reverse proxy tetap dibuat. Periksa service Wazuh Agent."
+        fi
+    else
+        log_warn "Wazuh Agent terpasang tetapi tidak aktif; konfigurasi valid disimpan."
+        log_warn "Log akan dipantau ketika Wazuh Agent dijalankan."
+    fi
 }
 
 # =============================================================================
@@ -369,6 +544,11 @@ log_ok "Konfigurasi Nginx valid."
 log_ok "Virtual host ditemukan pada konfigurasi aktif."
 log_ok "Dua deklarasi access_log menggunakan ${JSON_LOG_FORMAT_NAME}."
 log_ok "Tidak ada access_log reverser pada virtual host baru."
+
+# Optional Wazuh integration. This function is intentionally non-fatal:
+# a Wazuh issue must not roll back a valid Nginx virtual host.
+echo
+register_wazuh_logs
 
 # =============================================================================
 # Summary
